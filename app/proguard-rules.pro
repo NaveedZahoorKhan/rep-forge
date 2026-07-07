@@ -1,0 +1,3 @@
+-keep class com.gymtracker.app.data.local.entity.** { *; }
+-keep class kotlinx.serialization.** { *; }
+-dontwarn com.google.firebase.**
