@@ -10,3 +10,4 @@ The project includes:
 - Hilt DI, repository/use-case layering, Kotlin Coroutines/Flow, local JSON/CSV backup, optional Firebase cloud backup hooks, and Google sign-in entry points.
 
 Open the project in Android Studio and run the `app` module. Firebase/Google sign-in requires the normal Google services project configuration before runtime cloud sync can be enabled.
+# rep-forge
