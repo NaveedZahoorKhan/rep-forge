@@ -78,9 +78,9 @@ object WorkoutTemplateCatalog {
         addWorkout(
             "Push Day",
             "Push/Pull/Legs",
-            "Chest, shoulders, and triceps with a strength-first compound lift.",
+            "Effectiveness Rating: 9/10\nChest, shoulders, and triceps with a strength-first compound lift. Highly backed by science due to optimal 2x/week frequency and synergistic muscle grouping.",
             listOf(
-                p("Barbell Bench Press", 4, 5, 8, 90.0, 120, warmup = true),
+                p("Barbell Bench Press", 4, 5, 8, 90.0, 180, warmup = true),
                 p("Overhead Press", 3, 6, 10, 45.0, 120),
                 p("Incline Dumbbell Press", 3, 8, 12, 30.0, 90),
                 p("Dumbbell Lateral Raise", 3, 12, 20, 10.0, 60, failureLastSet = true),
@@ -90,7 +90,7 @@ object WorkoutTemplateCatalog {
         addWorkout(
             "Pull Day",
             "Push/Pull/Legs",
-            "Back and biceps with vertical and horizontal pulling.",
+            "Effectiveness Rating: 9/10\nBack and biceps with vertical and horizontal pulling. Excellent synergy and allows for deep recovery before the next session.",
             listOf(
                 p("Deadlift", 3, 3, 5, 120.0, 180, warmup = true),
                 p("Pull Up", 4, 6, 10, 0.0, 120, failureLastSet = true),
@@ -102,7 +102,7 @@ object WorkoutTemplateCatalog {
         addWorkout(
             "Leg Day",
             "Push/Pull/Legs",
-            "Squat-centered lower-body training.",
+            "Effectiveness Rating: 9/10\nSquat-centered lower-body training. High scientific backing as it isolates the highest taxing muscle groups into their own dedicated day.",
             listOf(
                 p("Back Squat", 5, 5, 8, 100.0, 180, warmup = true),
                 p("Romanian Deadlift", 4, 6, 10, 80.0, 120),
@@ -114,7 +114,7 @@ object WorkoutTemplateCatalog {
         addWorkout(
             "Upper Body",
             "Upper/Lower",
-            "Balanced upper day for pressing and pulling.",
+            "Effectiveness Rating: 8.5/10\nBalanced upper day for pressing and pulling. Great for 4-day splits, ensuring multiple weekly exposures for hypertrophy.",
             listOf(
                 p("Barbell Bench Press", 4, 6, 8, 85.0, 150),
                 p("Barbell Row", 4, 6, 10, 70.0, 120),
@@ -127,7 +127,7 @@ object WorkoutTemplateCatalog {
         addWorkout(
             "Lower Body",
             "Upper/Lower",
-            "Lower day with squat, hinge, and unilateral work.",
+            "Effectiveness Rating: 8.5/10\nLower day with squat, hinge, and unilateral work. Evidence-based template to build size and strength effectively.",
             listOf(
                 p("Back Squat", 4, 5, 8, 95.0, 180),
                 p("Romanian Deadlift", 4, 8, 10, 75.0, 120),
@@ -139,7 +139,7 @@ object WorkoutTemplateCatalog {
         addWorkout(
             "Full Body Strength",
             "Full Body",
-            "Three-day full-body strength template.",
+            "Effectiveness Rating: 8/10\nThree-day full-body strength template. Highly efficient for beginners/intermediates maximizing frequency and neurological adaptation.",
             listOf(
                 p("Back Squat", 3, 5, 5, 100.0, 180),
                 p("Barbell Bench Press", 3, 5, 5, 85.0, 180),
@@ -150,7 +150,7 @@ object WorkoutTemplateCatalog {
         addWorkout(
             "Bro Split Chest",
             "Bro Split",
-            "High-volume chest day with pressing and fly patterns.",
+            "Effectiveness Rating: 4/10\nHigh-volume chest day. Less scientifically optimal due to low frequency (1x/week) and potential for junk volume late in the session.",
             listOf(
                 p("Barbell Bench Press", 5, 5, 10, 85.0, 150),
                 p("Incline Dumbbell Press", 4, 8, 12, 30.0, 90),
@@ -161,7 +161,7 @@ object WorkoutTemplateCatalog {
         addWorkout(
             "Arnold Split Torso",
             "Arnold Split",
-            "Chest and back supersets inspired by classic high-frequency training.",
+            "Effectiveness Rating: 7/10\nChest and back supersets. High pump and time efficiency, but can lead to localized fatigue interfering with heavy compound lifts.",
             listOf(
                 p("Barbell Bench Press", 4, 8, 12, 75.0, 90, supersetGroup = "A"),
                 p("Pull Up", 4, 8, 12, 0.0, 90, supersetGroup = "A"),
@@ -173,7 +173,7 @@ object WorkoutTemplateCatalog {
         addWorkout(
             "PHUL Power Upper",
             "PHUL",
-            "Power hypertrophy upper day.",
+            "Effectiveness Rating: 8.5/10\nPower hypertrophy upper day. Combines strength (heavy low reps) and hypertrophy (volume) across different days, well-supported by periodization research.",
             listOf(
                 p("Barbell Bench Press", 4, 3, 5, 90.0, 180),
                 p("Barbell Row", 4, 3, 5, 80.0, 180),
@@ -184,7 +184,7 @@ object WorkoutTemplateCatalog {
         addWorkout(
             "PHAT Lower Power",
             "PHAT",
-            "Power lower day with low reps and accessory volume.",
+            "Effectiveness Rating: 8.5/10\nPower lower day with low reps and accessory volume. Excellent for intermediate lifters combining mechanical tension and metabolic stress.",
             listOf(
                 p("Back Squat", 3, 3, 5, 110.0, 180),
                 p("Deadlift", 3, 3, 5, 130.0, 180),
@@ -195,7 +195,7 @@ object WorkoutTemplateCatalog {
         addWorkout(
             "StrongLifts 5x5 A",
             "5x5 StrongLifts",
-            "Classic 5x5 A day.",
+            "Effectiveness Rating: 7.5/10\nClassic 5x5 A day. Great for beginners to build foundational strength rapidly, though lacks lateral/accessory volume for balanced hypertrophy.",
             listOf(
                 p("Back Squat", 5, 5, 5, 100.0, 180),
                 p("Barbell Bench Press", 5, 5, 5, 80.0, 180),
@@ -205,7 +205,7 @@ object WorkoutTemplateCatalog {
         addWorkout(
             "Starting Strength A",
             "Starting Strength",
-            "Novice linear progression A day.",
+            "Effectiveness Rating: 7.5/10\nNovice linear progression A day. Highly effective for initial strength gains through frequent heavy compound exposure, but very low volume.",
             listOf(
                 p("Back Squat", 3, 5, 5, 95.0, 180),
                 p("Barbell Bench Press", 3, 5, 5, 80.0, 180),
