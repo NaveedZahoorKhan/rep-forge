@@ -54,6 +54,7 @@ import com.gymtracker.app.domain.model.WorkoutDraft
 import com.gymtracker.app.domain.model.WorkoutExerciseDraft
 import com.gymtracker.app.domain.repository.GymRepository
 import com.gymtracker.app.presentation.components.ChipGroup
+import com.gymtracker.app.presentation.components.EmptyState
 import com.gymtracker.app.presentation.components.SectionTitle
 import com.gymtracker.app.presentation.components.TagRow
 import com.gymtracker.app.data.local.entity.label
@@ -120,15 +121,24 @@ fun WorkoutsScreen(
 @Composable
 private fun WorkoutList(workouts: List<WorkoutEntity>, onStartWorkout: (String) -> Unit) {
     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        items(workouts, key = { it.id }) { workout ->
-            Card(onClick = { onStartWorkout(workout.id) }) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(workout.name, fontWeight = FontWeight.SemiBold)
-                        Text(if (workout.isTemplate) "Template" else "Custom", color = MaterialTheme.colorScheme.primary)
+        if (workouts.isEmpty()) {
+            item {
+                EmptyState(
+                    title = "No workouts found",
+                    detail = "Create a custom workout to get started",
+                )
+            }
+        } else {
+            items(workouts, key = { it.id }) { workout ->
+                Card(onClick = { onStartWorkout(workout.id) }) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(workout.name, fontWeight = FontWeight.SemiBold)
+                            Text(if (workout.isTemplate) "Template" else "Custom", color = MaterialTheme.colorScheme.primary)
+                        }
+                        Text(workout.splitType, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(workout.description, style = MaterialTheme.typography.bodySmall)
                     }
-                    Text(workout.splitType, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(workout.description, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -279,12 +289,21 @@ private fun ExerciseLibrary(exercises: List<ExerciseEntity>) {
 private fun PlannerPanel(schedule: List<WeeklyScheduleEntity>) {
     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { SectionTitle("Weekly schedule") }
-        items(schedule, key = { it.id }) { item ->
-            Card {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(item.weekDay.name.lowercase().replaceFirstChar { it.titlecase() }, fontWeight = FontWeight.SemiBold)
-                    Text(item.workoutName)
-                    Text("${item.periodizationType.name} - deload every ${item.deloadEveryWeeks} weeks - reset every ${item.resetEveryWeeks} weeks")
+        if (schedule.isEmpty()) {
+            item {
+                EmptyState(
+                    title = "No schedule",
+                    detail = "Your weekly workout schedule is empty",
+                )
+            }
+        } else {
+            items(schedule, key = { it.id }) { item ->
+                Card {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(item.weekDay.name.lowercase().replaceFirstChar { it.titlecase() }, fontWeight = FontWeight.SemiBold)
+                        Text(item.workoutName)
+                        Text("${item.periodizationType.name} - deload every ${item.deloadEveryWeeks} weeks - reset every ${item.resetEveryWeeks} weeks")
+                    }
                 }
             }
         }
