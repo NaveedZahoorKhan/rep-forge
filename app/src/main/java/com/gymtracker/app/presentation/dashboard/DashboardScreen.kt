@@ -30,6 +30,7 @@ import com.gymtracker.app.data.local.entity.WorkoutEntity
 import com.gymtracker.app.data.local.entity.WorkoutSessionEntity
 import com.gymtracker.app.domain.model.DashboardStats
 import com.gymtracker.app.domain.repository.GymRepository
+import com.gymtracker.app.presentation.components.EmptyState
 import com.gymtracker.app.presentation.components.MetricCard
 import com.gymtracker.app.presentation.components.SectionTitle
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -123,11 +124,20 @@ fun DashboardScreen(
             }
         }
         item { SectionTitle("Recent history") }
-        items(state.history, key = { it.id }) { session ->
-            Card {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(session.workoutName, fontWeight = FontWeight.SemiBold)
-                    Text("${session.totalVolume.toInt()} kg volume - ${session.durationSeconds / 60} min")
+        if (state.history.isEmpty()) {
+            item {
+                EmptyState(
+                    title = "No history yet",
+                    detail = "Your completed workouts will appear here",
+                )
+            }
+        } else {
+            items(state.history, key = { it.id }) { session ->
+                Card {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(session.workoutName, fontWeight = FontWeight.SemiBold)
+                        Text("${session.totalVolume.toInt()} kg volume - ${session.durationSeconds / 60} min")
+                    }
                 }
             }
         }
