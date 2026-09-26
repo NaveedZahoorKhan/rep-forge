@@ -20,9 +20,48 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
+
+        val geminiKey = providers.environmentVariable("GEMINI_API_KEY")
+            .orElse(
+                providers.fileContents(rootProject.layout.projectDirectory.file(".env"))
+                    .asText
+                    .map { content ->
+                        content.lines()
+                            .firstOrNull { it.trim().startsWith("GEMINI_API_KEY=") }
+                            ?.substringAfter("=")
+                            ?.trim()
+                            ?: ""
+                    }
+            )
+            .orElse(
+                providers.fileContents(rootProject.layout.projectDirectory.file(".env.example"))
+                    .asText
+                    .map { content ->
+                        content.lines()
+                            .firstOrNull { it.trim().startsWith("GEMINI_API_KEY=") }
+                            ?.substringAfter("=")
+                            ?.trim()
+                            ?: ""
+                    }
+            )
+            .getOrElse("")
+
+        buildConfigField("String", "GEMINI_API_KEY", "\"$geminiKey\"")
+    }
+
+    signingConfigs {
+        create("debugConfig") {
+            storeFile = file("${rootDir}/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debugConfig")
+        }
         release {
             isMinifyEnabled = true
             proguardFiles(
@@ -85,10 +124,15 @@ dependencies {
     implementation(libs.google.play.services.auth)
     implementation(libs.hilt.android)
     implementation(libs.kotlinx.serialization.json)
-    implementation(libs.vico.compose)
-    implementation(libs.vico.compose.m3)
+    implementation(libs.okhttp)
+    implementation(libs.okhttp.logging)
+    implementation(libs.retrofit)
+    implementation(libs.retrofit.converter.kotlinx.serialization)
 
     debugImplementation(libs.compose.ui.tooling)
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
 
     ksp(libs.androidx.hilt.compiler)
     ksp(libs.androidx.room.compiler)

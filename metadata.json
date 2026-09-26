@@ -1,0 +1,6 @@
+{
+  "name": "GymTracker",
+  "description": "Comprehensive workout and gym tracking app with Gemini AI custom workout builder, equipment vision analysis, health profiling, and daily progress sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Analytics
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.FitnessCenter
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Person
@@ -33,8 +34,11 @@ import com.gymtracker.app.data.local.entity.UserProfileEntity
 import com.gymtracker.app.domain.repository.GymRepository
 import com.gymtracker.app.presentation.active.ActiveWorkoutRouteScreen
 import com.gymtracker.app.presentation.dashboard.DashboardScreen
+import com.gymtracker.app.presentation.gemini.GeminiCoachScreen
 import com.gymtracker.app.presentation.navigation.ActiveWorkoutRoute
 import com.gymtracker.app.presentation.navigation.DashboardRoute
+import com.gymtracker.app.presentation.navigation.GeminiCoachRoute
+import com.gymtracker.app.presentation.navigation.HistoryRoute
 import com.gymtracker.app.presentation.navigation.OnboardingRoute
 import com.gymtracker.app.presentation.navigation.ProfileRoute
 import com.gymtracker.app.presentation.navigation.ProgressRoute
@@ -44,6 +48,7 @@ import com.gymtracker.app.presentation.profile.ProfileScreen
 import com.gymtracker.app.presentation.progress.ProgressScreen
 import com.gymtracker.app.presentation.theme.GymTrackerTheme
 import com.gymtracker.app.presentation.workouts.WorkoutsScreen
+import com.gymtracker.app.presentation.history.WorkoutHistoryScreen
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
@@ -59,7 +64,10 @@ class AppViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     init {
-        viewModelScope.launch { repository.seedInitialData() }
+        viewModelScope.launch {
+            runCatching { repository.seedInitialData() }
+                .onFailure { android.util.Log.e("AppViewModel", "Initial seeding failed", it) }
+        }
     }
 }
 
@@ -123,11 +131,19 @@ private fun GymTrackerNav(profile: UserProfileEntity) {
                     onOpenWorkout = { sessionId -> navController.navigate(ActiveWorkoutRoute(sessionId = sessionId)) },
                     onStartWorkout = { workoutId -> navController.navigate(ActiveWorkoutRoute(workoutId = workoutId)) },
                     onOpenWorkouts = { navController.navigate(WorkoutsRoute) },
+                    onOpenGemini = { navController.navigate(GeminiCoachRoute) },
+                    onOpenHistory = { navController.navigate(HistoryRoute) },
                 )
             }
             composable<WorkoutsRoute> {
                 WorkoutsScreen(
                     onStartWorkout = { workoutId -> navController.navigate(ActiveWorkoutRoute(workoutId = workoutId)) },
+                    onOpenGemini = { navController.navigate(GeminiCoachRoute) },
+                )
+            }
+            composable<HistoryRoute> {
+                WorkoutHistoryScreen(
+                    onNavigateBack = { navController.popBackStack() },
                 )
             }
             composable<ActiveWorkoutRoute> { entry ->
@@ -143,6 +159,20 @@ private fun GymTrackerNav(profile: UserProfileEntity) {
             }
             composable<ProgressRoute> { ProgressScreen() }
             composable<ProfileRoute> { ProfileScreen() }
+            composable<GeminiCoachRoute> {
+                GeminiCoachScreen(
+                    onNavigateToActiveWorkout = { sessionId ->
+                        navController.navigate(ActiveWorkoutRoute(sessionId = sessionId))
+                    },
+                    onNavigateToWorkoutsList = {
+                        navController.navigate(WorkoutsRoute) {
+                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                )
+            }
         }
     }
 }
@@ -157,6 +187,7 @@ private data class BottomItem(
 private val bottomItems = listOf(
     BottomItem("Dashboard", "DashboardRoute", DashboardRoute, Icons.Outlined.Home),
     BottomItem("Workouts", "WorkoutsRoute", WorkoutsRoute, Icons.Outlined.FitnessCenter),
+    BottomItem("Gemini AI", "GeminiCoachRoute", GeminiCoachRoute, Icons.Outlined.AutoAwesome),
     BottomItem("Progress", "ProgressRoute", ProgressRoute, Icons.Outlined.Analytics),
     BottomItem("Profile", "ProfileRoute", ProfileRoute, Icons.Outlined.Person),
 )

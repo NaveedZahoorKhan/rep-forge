@@ -12,6 +12,9 @@ data object DashboardRoute
 data object WorkoutsRoute
 
 @Serializable
+data object HistoryRoute
+
+@Serializable
 data class ActiveWorkoutRoute(
     val sessionId: String = "",
     val workoutId: String = "",
@@ -25,3 +28,6 @@ data object ProfileRoute
 
 @Serializable
 data object NutritionRoute
+
+@Serializable
+data object GeminiCoachRoute

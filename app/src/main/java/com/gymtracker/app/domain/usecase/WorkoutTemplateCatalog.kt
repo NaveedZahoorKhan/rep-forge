@@ -243,6 +243,122 @@ object WorkoutTemplateCatalog {
         return SeedWorkoutGraph(workouts, workoutExercises, sets, schedules)
     }
 
+    fun createScheduleForSplit(splitName: String, workouts: List<WorkoutEntity>): List<WeeklyScheduleEntity> {
+        fun stableId(key: String): String = UUID.nameUUIDFromBytes(key.lowercase().toByteArray()).toString()
+        val workoutMap = workouts.associateBy { it.name.lowercase().trim() }
+
+        val pushWorkout = workoutMap["push day"] ?: workouts.firstOrNull { it.splitType.contains("push", true) }
+        val pullWorkout = workoutMap["pull day"] ?: workouts.firstOrNull { it.splitType.contains("pull", true) }
+        val legWorkout = workoutMap["leg day"] ?: workouts.firstOrNull { it.splitType.contains("leg", true) }
+        val upperWorkout = workoutMap["upper body"] ?: workouts.firstOrNull { it.splitType.contains("upper", true) }
+        val lowerWorkout = workoutMap["lower body"] ?: workouts.firstOrNull { it.splitType.contains("lower", true) }
+        val fullBodyWorkout = workoutMap["full body strength"] ?: workouts.firstOrNull { it.splitType.contains("full", true) }
+        val chestWorkout = workoutMap["bro split chest"] ?: pushWorkout
+
+        val normalized = splitName.lowercase()
+        return when {
+            // PPLUL (Push Pull Legs Upper Lower) - 5 days
+            normalized.contains("pplul") -> {
+                listOfNotNull(
+                    pushWorkout?.let { WeeklyScheduleEntity(stableId("pplul:mon"), WeekDay.MONDAY, it.id, it.name, PeriodizationType.LINEAR) },
+                    pullWorkout?.let { WeeklyScheduleEntity(stableId("pplul:tue"), WeekDay.TUESDAY, it.id, it.name, PeriodizationType.DUP) },
+                    legWorkout?.let { WeeklyScheduleEntity(stableId("pplul:wed"), WeekDay.WEDNESDAY, it.id, it.name, PeriodizationType.BLOCK) },
+                    upperWorkout?.let { WeeklyScheduleEntity(stableId("pplul:fri"), WeekDay.FRIDAY, it.id, it.name, PeriodizationType.LINEAR) },
+                    lowerWorkout?.let { WeeklyScheduleEntity(stableId("pplul:sat"), WeekDay.SATURDAY, it.id, it.name, PeriodizationType.BLOCK) },
+                )
+            }
+            // Push Pull Legs (PPL) - 6 days (Mon: Push, Tue: Pull, Wed: Legs, Thu: Push, Fri: Pull, Sat: Legs, Sun: Rest)
+            normalized.contains("ppl") || normalized.contains("push") -> {
+                listOfNotNull(
+                    pushWorkout?.let { WeeklyScheduleEntity(stableId("ppl:mon"), WeekDay.MONDAY, it.id, it.name, PeriodizationType.LINEAR) },
+                    pullWorkout?.let { WeeklyScheduleEntity(stableId("ppl:tue"), WeekDay.TUESDAY, it.id, it.name, PeriodizationType.DUP) },
+                    legWorkout?.let { WeeklyScheduleEntity(stableId("ppl:wed"), WeekDay.WEDNESDAY, it.id, it.name, PeriodizationType.BLOCK) },
+                    pushWorkout?.let { WeeklyScheduleEntity(stableId("ppl:thu"), WeekDay.THURSDAY, it.id, it.name, PeriodizationType.LINEAR) },
+                    pullWorkout?.let { WeeklyScheduleEntity(stableId("ppl:fri"), WeekDay.FRIDAY, it.id, it.name, PeriodizationType.DUP) },
+                    legWorkout?.let { WeeklyScheduleEntity(stableId("ppl:sat"), WeekDay.SATURDAY, it.id, it.name, PeriodizationType.BLOCK) },
+                )
+            }
+            // Upper / Lower - 4 days
+            normalized.contains("upper") || normalized.contains("lower") -> {
+                listOfNotNull(
+                    upperWorkout?.let { WeeklyScheduleEntity(stableId("ul:mon"), WeekDay.MONDAY, it.id, it.name, PeriodizationType.LINEAR) },
+                    lowerWorkout?.let { WeeklyScheduleEntity(stableId("ul:tue"), WeekDay.TUESDAY, it.id, it.name, PeriodizationType.BLOCK) },
+                    upperWorkout?.let { WeeklyScheduleEntity(stableId("ul:thu"), WeekDay.THURSDAY, it.id, it.name, PeriodizationType.DUP) },
+                    lowerWorkout?.let { WeeklyScheduleEntity(stableId("ul:fri"), WeekDay.FRIDAY, it.id, it.name, PeriodizationType.LINEAR) },
+                )
+            }
+            // Bro Split - 5 days
+            normalized.contains("bro") -> {
+                listOfNotNull(
+                    chestWorkout?.let { WeeklyScheduleEntity(stableId("bro:mon"), WeekDay.MONDAY, it.id, it.name, PeriodizationType.LINEAR) },
+                    pullWorkout?.let { WeeklyScheduleEntity(stableId("bro:tue"), WeekDay.TUESDAY, it.id, it.name, PeriodizationType.DUP) },
+                    pushWorkout?.let { WeeklyScheduleEntity(stableId("bro:wed"), WeekDay.WEDNESDAY, it.id, it.name, PeriodizationType.LINEAR) },
+                    legWorkout?.let { WeeklyScheduleEntity(stableId("bro:thu"), WeekDay.THURSDAY, it.id, it.name, PeriodizationType.BLOCK) },
+                    upperWorkout?.let { WeeklyScheduleEntity(stableId("bro:fri"), WeekDay.FRIDAY, it.id, it.name, PeriodizationType.LINEAR) },
+                )
+            }
+            // Full Body - 3 days
+            else -> {
+                listOfNotNull(
+                    fullBodyWorkout?.let { WeeklyScheduleEntity(stableId("fb:mon"), WeekDay.MONDAY, it.id, it.name, PeriodizationType.LINEAR) },
+                    fullBodyWorkout?.let { WeeklyScheduleEntity(stableId("fb:wed"), WeekDay.WEDNESDAY, it.id, it.name, PeriodizationType.DUP) },
+                    fullBodyWorkout?.let { WeeklyScheduleEntity(stableId("fb:fri"), WeekDay.FRIDAY, it.id, it.name, PeriodizationType.BLOCK) },
+                )
+            }
+        }
+    }
+
+    fun getWorkoutsForSplit(
+        splitName: String,
+        allWorkouts: List<WorkoutEntity>,
+        schedules: List<WeeklyScheduleEntity> = emptyList(),
+    ): List<WorkoutEntity> {
+        val scheduledIds = schedules.map { it.workoutId }.toSet()
+        val scheduledNames = schedules.map { it.workoutName.lowercase().trim() }.toSet()
+        val normalized = splitName.lowercase().trim()
+
+        val matched = allWorkouts.filter { workout ->
+            val wName = workout.name.lowercase().trim()
+            val wSplit = workout.splitType.lowercase().trim()
+
+            // If workout is explicitly part of the active weekly schedule, include it!
+            if (workout.id in scheduledIds || wName in scheduledNames) {
+                return@filter true
+            }
+
+            when {
+                normalized.contains("pplul") -> {
+                    wName in listOf("push day", "pull day", "leg day", "upper body", "lower body") ||
+                            (wSplit.contains("push") || wSplit.contains("pull") || wSplit.contains("leg") ||
+                             wSplit.contains("upper") || wSplit.contains("lower")) &&
+                            !wSplit.contains("arnold") && !wSplit.contains("bro")
+                }
+                normalized.contains("ppl") || normalized.contains("push") -> {
+                    wName in listOf("push day", "pull day", "leg day") ||
+                            (wSplit.contains("push") || wSplit.contains("pull") || wSplit.contains("leg")) &&
+                            !wSplit.contains("upper") && !wSplit.contains("lower") &&
+                            !wSplit.contains("arnold") && !wSplit.contains("bro")
+                }
+                normalized.contains("upper") || normalized.contains("lower") -> {
+                    wName in listOf("upper body", "lower body") ||
+                            (wSplit.contains("upper") || wSplit.contains("lower")) &&
+                            !wSplit.contains("arnold") && !wSplit.contains("bro")
+                }
+                normalized.contains("bro") -> {
+                    wSplit.contains("bro") || wName.contains("bro")
+                }
+                normalized.contains("full") -> {
+                    wSplit.contains("full") || wName.contains("full")
+                }
+                else -> {
+                    wSplit.contains(normalized) || wName.contains(normalized)
+                }
+            }
+        }
+
+        return if (matched.isNotEmpty()) matched else allWorkouts.take(3)
+    }
+
     private data class Prescription(
         val exerciseName: String,
         val sets: Int,

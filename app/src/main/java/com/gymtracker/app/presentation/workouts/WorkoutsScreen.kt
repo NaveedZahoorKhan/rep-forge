@@ -9,9 +9,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -21,10 +27,12 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import com.gymtracker.app.presentation.history.WorkoutHistoryScreen
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -36,9 +44,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -48,6 +58,8 @@ import com.gymtracker.app.data.local.entity.Equipment
 import com.gymtracker.app.data.local.entity.ExerciseEntity
 import com.gymtracker.app.data.local.entity.MuscleGroup
 import com.gymtracker.app.data.local.entity.SetType
+import com.gymtracker.app.data.local.entity.UserProfileEntity
+import com.gymtracker.app.data.local.entity.WeekDay
 import com.gymtracker.app.data.local.entity.WeeklyScheduleEntity
 import com.gymtracker.app.data.local.entity.WorkoutEntity
 import com.gymtracker.app.domain.model.WorkoutDraft
@@ -59,10 +71,13 @@ import com.gymtracker.app.presentation.components.SectionTitle
 import com.gymtracker.app.presentation.components.TagRow
 import com.gymtracker.app.data.local.entity.label
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.time.DayOfWeek
+import java.time.LocalDate
 import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -70,6 +85,7 @@ data class WorkoutsUiState(
     val workouts: List<WorkoutEntity> = emptyList(),
     val exercises: List<ExerciseEntity> = emptyList(),
     val schedule: List<WeeklyScheduleEntity> = emptyList(),
+    val profile: UserProfileEntity = UserProfileEntity(),
 )
 
 @HiltViewModel
@@ -80,8 +96,14 @@ class WorkoutsViewModel @Inject constructor(
         repository.observeWorkouts(),
         repository.observeExercises(),
         repository.observeWeeklySchedule(),
-    ) { workouts, exercises, schedule ->
-        WorkoutsUiState(workouts = workouts, exercises = exercises, schedule = schedule)
+        repository.observeUserProfile(),
+    ) { workouts, exercises, schedule, profile ->
+        WorkoutsUiState(
+            workouts = workouts,
+            exercises = exercises,
+            schedule = schedule,
+            profile = profile ?: UserProfileEntity(),
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), WorkoutsUiState())
 
     fun createWorkout(draft: WorkoutDraft, onCreated: (String) -> Unit) {
@@ -89,16 +111,25 @@ class WorkoutsViewModel @Inject constructor(
             onCreated(repository.createCustomWorkout(draft))
         }
     }
+
+    fun applySplit(splitName: String) {
+        viewModelScope.launch {
+            repository.applyRoutineSplitSchedule(splitName)
+            val currentProfile = repository.observeUserProfile().first() ?: UserProfileEntity()
+            repository.createOrUpdateProfile(currentProfile.copy(preferredSplit = splitName))
+        }
+    }
 }
 
 @Composable
 fun WorkoutsScreen(
     onStartWorkout: (String) -> Unit,
+    onOpenGemini: (() -> Unit)? = null,
     viewModel: WorkoutsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var tab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Workouts", "Create", "Library", "Planner")
+    val tabs = listOf("Workouts", "History", "Create", "Library", "Planner")
 
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Workouts", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
@@ -109,35 +140,161 @@ fun WorkoutsScreen(
         }
         Box(Modifier.weight(1f)) {
             when (tab) {
-                0 -> WorkoutList(state.workouts, onStartWorkout)
-                1 -> CreateWorkoutPanel(state.exercises, viewModel, onStartWorkout)
-                2 -> ExerciseLibrary(state.exercises)
-                3 -> PlannerPanel(state.schedule)
+                0 -> WorkoutList(
+                    workouts = state.workouts,
+                    onStartWorkout = onStartWorkout,
+                    onOpenGemini = onOpenGemini,
+                    onOpenHistory = { tab = 1 },
+                )
+                1 -> WorkoutHistoryScreen()
+                2 -> CreateWorkoutPanel(state.exercises, viewModel, onStartWorkout, onOpenGemini)
+                3 -> ExerciseLibrary(state.exercises)
+                4 -> PlannerPanel(
+                    schedule = state.schedule,
+                    workouts = state.workouts,
+                    currentSplit = state.profile.preferredSplit,
+                    onStartWorkout = onStartWorkout,
+                    onApplySplit = { viewModel.applySplit(it) },
+                )
             }
         }
     }
 }
 
 @Composable
-private fun WorkoutList(workouts: List<WorkoutEntity>, onStartWorkout: (String) -> Unit) {
+private fun WorkoutList(
+    workouts: List<WorkoutEntity>,
+    onStartWorkout: (String) -> Unit,
+    onOpenGemini: (() -> Unit)? = null,
+    onOpenHistory: (() -> Unit)? = null,
+) {
+    var selectedFilter by remember { mutableStateOf("All") }
+    val filters = listOf("All", "Push", "Pull", "Legs", "Bro Split", "Upper", "Lower")
+
+    val filteredWorkouts = remember(workouts, selectedFilter) {
+        if (selectedFilter == "All") {
+            workouts
+        } else {
+            workouts.filter {
+                it.splitType.contains(selectedFilter, ignoreCase = true) ||
+                it.name.contains(selectedFilter, ignoreCase = true)
+            }
+        }
+    }
+
     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (workouts.isEmpty()) {
+        onOpenGemini?.let { openGemini ->
+            item {
+                Card(
+                    onClick = openGemini,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Column(Modifier.weight(1f)) {
+                            Text("Gemini AI Workout Builder", fontWeight = FontWeight.Bold)
+                            Text(
+                                "Generate a routine tailored to your registered gym machines & personal notes",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        onOpenHistory?.let { openHistory ->
+            item {
+                Card(
+                    onClick = openHistory,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f)),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
+                        Column(Modifier.weight(1f)) {
+                            Text("Workout History & Volume Logs", fontWeight = FontWeight.Bold)
+                            Text(
+                                "View past session summaries, completion dates & exercise volume over time",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            androidx.compose.foundation.layout.Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                filters.take(4).forEach { filter ->
+                    FilterChip(
+                        selected = selectedFilter == filter,
+                        onClick = { selectedFilter = filter },
+                        label = { Text(filter, fontSize = 12.sp) }
+                    )
+                }
+            }
+        }
+
+        if (filteredWorkouts.isEmpty()) {
             item {
                 EmptyState(
                     title = "No workouts found",
-                    detail = "Create a custom workout to get started",
+                    detail = if (selectedFilter != "All") "No workouts matching '$selectedFilter'" else "Create a custom workout or build with Gemini to get started",
                 )
             }
         } else {
-            items(workouts, key = { it.id }) { workout ->
-                Card(onClick = { onStartWorkout(workout.id) }) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(workout.name, fontWeight = FontWeight.SemiBold)
-                            Text(if (workout.isTemplate) "Template" else "Custom", color = MaterialTheme.colorScheme.primary)
+            items(filteredWorkouts, key = { it.id }) { workout ->
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text(workout.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                            Surface(
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                            ) {
+                                Text(
+                                    workout.splitType,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                )
+                            }
                         }
-                        Text(workout.splitType, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(workout.description, style = MaterialTheme.typography.bodySmall)
+
+                        if (workout.description.isNotBlank()) {
+                            Text(workout.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            Button(
+                                onClick = { onStartWorkout(workout.id) },
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                            ) {
+                                Text("⚡ Start Workout", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
+                        }
                     }
                 }
             }
@@ -150,6 +307,7 @@ private fun CreateWorkoutPanel(
     exercises: List<ExerciseEntity>,
     viewModel: WorkoutsViewModel,
     onStartWorkout: (String) -> Unit,
+    onOpenGemini: (() -> Unit)? = null,
 ) {
     var name by remember { mutableStateOf("Custom Strength Day") }
     var split by remember { mutableStateOf("Custom") }
@@ -164,6 +322,30 @@ private fun CreateWorkoutPanel(
     val selected = remember { mutableStateListOf<String>() }
 
     LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        onOpenGemini?.let { openGemini ->
+            item {
+                Card(
+                    onClick = openGemini,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Column(Modifier.weight(1f)) {
+                            Text("Want AI to build this for you?", fontWeight = FontWeight.Bold)
+                            Text(
+                                "Snap gym machines & set health goals for instant custom routines",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        }
         item {
             OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Workout name") }, modifier = Modifier.fillMaxWidth())
         }
@@ -270,9 +452,9 @@ private fun ExerciseLibrary(exercises: List<ExerciseEntity>) {
         item {
             OutlinedTextField(value = query, onValueChange = { query = it }, label = { Text("Search exercises") }, modifier = Modifier.fillMaxWidth())
         }
-        item { ChipGroup(MuscleGroup.entries.map { it.label() }, muscle) { muscle = it } }
-        item { ChipGroup(Equipment.entries.map { it.label() }, equipment) { equipment = it } }
-        item { ChipGroup(Difficulty.entries.map { it.label() }, difficulty) { difficulty = it } }
+        item { ChipGroup(items = MuscleGroup.entries.map { it.label() }, selected = muscle, onSelected = { muscle = it }) }
+        item { ChipGroup(items = Equipment.entries.map { it.label() }, selected = equipment, onSelected = { equipment = it }) }
+        item { ChipGroup(items = Difficulty.entries.map { it.label() }, selected = difficulty, onSelected = { difficulty = it }) }
         items(filtered, key = { it.id }) { exercise ->
             Card {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -286,23 +468,164 @@ private fun ExerciseLibrary(exercises: List<ExerciseEntity>) {
 }
 
 @Composable
-private fun PlannerPanel(schedule: List<WeeklyScheduleEntity>) {
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item { SectionTitle("Weekly schedule") }
-        if (schedule.isEmpty()) {
-            item {
-                EmptyState(
-                    title = "No schedule",
-                    detail = "Your weekly workout schedule is empty",
-                )
+private fun PlannerPanel(
+    schedule: List<WeeklyScheduleEntity>,
+    workouts: List<WorkoutEntity>,
+    currentSplit: String,
+    onStartWorkout: (String) -> Unit,
+    onApplySplit: (String) -> Unit,
+) {
+    val currentSplitName = currentSplit.ifBlank { "Push Pull Legs (PPL)" }
+    val splits = listOf(
+        "Push Pull Legs (PPL)",
+        "PPLUL (Push Pull Legs Upper Lower)",
+        "Upper / Lower Split",
+        "Bro Split (Body Part Split)",
+        "Full Body Circuit",
+    )
+
+    val todayWeekDay = when (LocalDate.now().dayOfWeek) {
+        DayOfWeek.MONDAY -> WeekDay.MONDAY
+        DayOfWeek.TUESDAY -> WeekDay.TUESDAY
+        DayOfWeek.WEDNESDAY -> WeekDay.WEDNESDAY
+        DayOfWeek.THURSDAY -> WeekDay.THURSDAY
+        DayOfWeek.FRIDAY -> WeekDay.FRIDAY
+        DayOfWeek.SATURDAY -> WeekDay.SATURDAY
+        DayOfWeek.SUNDAY -> WeekDay.SUNDAY
+    }
+
+    val weekDaysOrdered = listOf(
+        WeekDay.MONDAY,
+        WeekDay.TUESDAY,
+        WeekDay.WEDNESDAY,
+        WeekDay.THURSDAY,
+        WeekDay.FRIDAY,
+        WeekDay.SATURDAY,
+        WeekDay.SUNDAY,
+    )
+
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Active Routine Split", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
+                            Text("Single select", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                        }
+                    }
+                    Text("Select a split to automatically populate your weekly workout schedule:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                    splits.forEach { splitItem ->
+                        val isSelected = currentSplitName.trim().equals(splitItem.trim(), ignoreCase = true)
+                        Surface(
+                            onClick = { onApplySplit(splitItem) },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                            border = androidx.compose.foundation.BorderStroke(
+                                if (isSelected) 1.5.dp else 0.5.dp,
+                                if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                androidx.compose.material3.RadioButton(
+                                    selected = isSelected,
+                                    onClick = { onApplySplit(splitItem) },
+                                    colors = androidx.compose.material3.RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
+                                )
+                                Text(splitItem, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium, fontSize = 13.sp)
+                            }
+                        }
+                    }
+                }
             }
-        } else {
-            items(schedule, key = { it.id }) { item ->
-                Card {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(item.weekDay.name.lowercase().replaceFirstChar { it.titlecase() }, fontWeight = FontWeight.SemiBold)
-                        Text(item.workoutName)
-                        Text("${item.periodizationType.name} - deload every ${item.deloadEveryWeeks} weeks - reset every ${item.resetEveryWeeks} weeks")
+        }
+
+        item { SectionTitle("Weekly Schedule by Day") }
+
+        items(weekDaysOrdered, key = { it.name }) { day ->
+            val isToday = day == todayWeekDay
+            val scheduled = schedule.firstOrNull { it.weekDay == day }
+            val workout = scheduled?.let { s ->
+                workouts.firstOrNull { it.id == s.workoutId } ?: workouts.firstOrNull { it.name.equals(s.workoutName, ignoreCase = true) }
+            }
+            val dayName = day.name.lowercase().replaceFirstChar { it.titlecase() }
+
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isToday) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f) else MaterialTheme.colorScheme.surface
+                ),
+                border = androidx.compose.foundation.BorderStroke(
+                    width = if (isToday) 2.dp else 1.dp,
+                    color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                )
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(dayName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                            if (isToday) {
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = MaterialTheme.colorScheme.primary
+                                ) {
+                                    Text("TODAY", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                                }
+                            }
+                        }
+
+                        if (scheduled != null) {
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer
+                            ) {
+                                Text(scheduled.workoutName, fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                            }
+                        } else {
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant
+                            ) {
+                                Text("Rest Day", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                            }
+                        }
+                    }
+
+                    if (scheduled != null) {
+                        Text(
+                            "${scheduled.periodizationType.name} periodization • Deload every ${scheduled.deloadEveryWeeks} wks",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        workout?.let { w ->
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                Button(
+                                    onClick = { onStartWorkout(w.id) },
+                                    shape = RoundedCornerShape(6.dp),
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 4.dp)
+                                ) {
+                                    Text(if (isToday) "Start Today's Workout" else "Start Workout", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    } else {
+                        Text("Active recovery, light mobility, and hydration.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }

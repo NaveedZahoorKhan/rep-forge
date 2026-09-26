@@ -14,25 +14,36 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
+interface NotificationHelper {
+    fun ensureChannels()
+    fun showRestComplete(exerciseName: String, sound: Boolean, vibration: Boolean)
+    fun showWorkoutReminder(title: String, body: String)
+
+    companion object {
+        const val REST_CHANNEL = "rest_timers"
+        const val REMINDER_CHANNEL = "workout_reminders"
+    }
+}
+
 @Singleton
-class NotificationHelper @Inject constructor(
+class NotificationHelperImpl @Inject constructor(
     @ApplicationContext private val context: Context,
-) {
-    fun ensureChannels() {
+) : NotificationHelper {
+    override fun ensureChannels() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val manager = context.getSystemService(NotificationManager::class.java)
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
         manager.createNotificationChannel(
-            NotificationChannel(REST_CHANNEL, "Rest timers", NotificationManager.IMPORTANCE_HIGH)
+            NotificationChannel(NotificationHelper.REST_CHANNEL, "Rest timers", NotificationManager.IMPORTANCE_HIGH)
         )
         manager.createNotificationChannel(
-            NotificationChannel(REMINDER_CHANNEL, "Workout reminders", NotificationManager.IMPORTANCE_DEFAULT)
+            NotificationChannel(NotificationHelper.REMINDER_CHANNEL, "Workout reminders", NotificationManager.IMPORTANCE_DEFAULT)
         )
     }
 
-    fun showRestComplete(exerciseName: String, sound: Boolean, vibration: Boolean) {
+    override fun showRestComplete(exerciseName: String, sound: Boolean, vibration: Boolean) {
         show(
             id = 1001,
-            channelId = REST_CHANNEL,
+            channelId = NotificationHelper.REST_CHANNEL,
             title = "Rest complete",
             body = "Next set: $exerciseName",
             sound = sound,
@@ -40,10 +51,10 @@ class NotificationHelper @Inject constructor(
         )
     }
 
-    fun showWorkoutReminder(title: String, body: String) {
+    override fun showWorkoutReminder(title: String, body: String) {
         show(
             id = 2001,
-            channelId = REMINDER_CHANNEL,
+            channelId = NotificationHelper.REMINDER_CHANNEL,
             title = title,
             body = body,
             sound = true,
@@ -71,10 +82,5 @@ class NotificationHelper @Inject constructor(
             .setDefaults(defaults)
             .build()
         NotificationManagerCompat.from(context).notify(id, notification)
-    }
-
-    companion object {
-        const val REST_CHANNEL = "rest_timers"
-        const val REMINDER_CHANNEL = "workout_reminders"
     }
 }

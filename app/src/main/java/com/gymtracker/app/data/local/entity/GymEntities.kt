@@ -200,12 +200,12 @@ data class WeightLogEntity(
 data class UserProfileEntity(
     @PrimaryKey val id: String = "me",
     val displayName: String = "Athlete",
-    val gender: Gender = Gender.OTHER,
+    val gender: Gender = Gender.MALE,
     val birthYear: Int? = null,
     val heightCm: Double = 175.0,
     val weightKg: Double = 75.0,
     val unitSystem: UnitSystem = UnitSystem.METRIC,
-    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val themeMode: ThemeMode = ThemeMode.LIGHT,
     val defaultRestSeconds: Int = 90,
     val soundEnabled: Boolean = true,
     val vibrationEnabled: Boolean = true,
@@ -216,10 +216,24 @@ data class UserProfileEntity(
     val fatGoalG: Double = 70.0,
     val fiberGoalG: Double = 30.0,
     val waterGoalMl: Int = 3000,
+    val primaryGoal: String = "Lose weight",
+    val preferredSplit: String = "Push Pull Legs (PPL)",
     val onboardingComplete: Boolean = false,
     val cloudSyncEnabled: Boolean = false,
     val analyticsOptIn: Boolean = false,
     val updatedAt: Long = System.currentTimeMillis(),
+)
+
+@Serializable
+@Entity(tableName = "gym_equipments", indices = [Index("name"), Index("createdAt")])
+data class GymEquipmentEntity(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val category: String = "Machine",
+    val location: String = "Gym",
+    val photoUri: String? = null,
+    val notes: String = "",
+    val createdAt: Long = System.currentTimeMillis(),
 )
 
 @Serializable

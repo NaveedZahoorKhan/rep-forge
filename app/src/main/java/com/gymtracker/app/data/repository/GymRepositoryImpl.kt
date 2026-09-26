@@ -4,9 +4,17 @@ import android.net.Uri
 import com.gymtracker.app.data.backup.CloudBackupService
 import com.gymtracker.app.data.backup.LocalBackupService
 import com.gymtracker.app.data.local.dao.GymDao
+import com.gymtracker.app.data.local.dao.ManualWorkoutDao
 import com.gymtracker.app.data.local.entity.BodyMeasurementEntity
+import com.gymtracker.app.data.local.entity.Difficulty
+import com.gymtracker.app.data.local.entity.Equipment
 import com.gymtracker.app.data.local.entity.ExerciseEntity
+import com.gymtracker.app.data.local.entity.GeminiSyncReportEntity
+import com.gymtracker.app.data.local.entity.ManualWorkoutSessionEntity
+import com.gymtracker.app.data.local.entity.ManualWorkoutSessionWithSets
+import com.gymtracker.app.data.local.entity.ManualWorkoutSetEntity
 import com.gymtracker.app.data.local.entity.MealEntity
+import com.gymtracker.app.data.local.entity.MuscleGroup
 import com.gymtracker.app.data.local.entity.NutritionLogEntity
 import com.gymtracker.app.data.local.entity.PerformedSetEntity
 import com.gymtracker.app.data.local.entity.PersonalRecordEntity
@@ -15,6 +23,7 @@ import com.gymtracker.app.data.local.entity.ReminderEntity
 import com.gymtracker.app.data.local.entity.SessionStatus
 import com.gymtracker.app.data.local.entity.SetTemplateEntity
 import com.gymtracker.app.data.local.entity.SetType
+import com.gymtracker.app.data.local.entity.UserHealthProfileEntity
 import com.gymtracker.app.data.local.entity.UserProfileEntity
 import com.gymtracker.app.data.local.entity.WaterLogEntity
 import com.gymtracker.app.data.local.entity.WeeklyScheduleEntity
@@ -22,9 +31,17 @@ import com.gymtracker.app.data.local.entity.WeightLogEntity
 import com.gymtracker.app.data.local.entity.WorkoutEntity
 import com.gymtracker.app.data.local.entity.WorkoutExerciseEntity
 import com.gymtracker.app.data.local.entity.WorkoutSessionEntity
+import com.gymtracker.app.data.remote.gemini.GeminiWorkoutBuilderResult
+import com.gymtracker.app.data.remote.gemini.GeminiWorkoutOption
 import com.gymtracker.app.domain.model.DashboardStats
 import com.gymtracker.app.domain.model.ExerciseProgressPoint
+import com.gymtracker.app.domain.model.ExerciseVolumePoint
+import com.gymtracker.app.domain.model.ExerciseVolumeSummary
+import com.gymtracker.app.domain.model.PastWorkoutLogDraft
+import com.gymtracker.app.domain.model.SetDetailSummary
 import com.gymtracker.app.domain.model.WorkoutDraft
+import com.gymtracker.app.domain.model.WorkoutExerciseDraft
+import com.gymtracker.app.domain.model.WorkoutSessionSummary
 import com.gymtracker.app.domain.repository.GymRepository
 import com.gymtracker.app.domain.usecase.ExerciseCatalog
 import com.gymtracker.app.domain.usecase.OneRepMaxCalculator
@@ -32,14 +49,18 @@ import com.gymtracker.app.domain.usecase.WorkoutTemplateCatalog
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 
 @Singleton
 class GymRepositoryImpl @Inject constructor(
     private val dao: GymDao,
+    private val manualWorkoutDao: ManualWorkoutDao,
     private val localBackupService: LocalBackupService,
     private val cloudBackupService: CloudBackupService,
 ) : GymRepository {
@@ -51,6 +72,194 @@ class GymRepositoryImpl @Inject constructor(
     override fun observeActiveSession(): Flow<WorkoutSessionEntity?> = dao.observeSessionByStatus(SessionStatus.ACTIVE)
     override fun observeSessionSets(sessionId: String): Flow<List<PerformedSetEntity>> = dao.observeSessionSets(sessionId)
     override fun observeHistory(): Flow<List<WorkoutSessionEntity>> = dao.observeHistory()
+
+    override fun observeManualWorkouts(): Flow<List<ManualWorkoutSessionWithSets>> =
+        manualWorkoutDao.observeAllManualSessionsWithSets()
+
+    override fun observeManualWorkout(sessionId: String): Flow<ManualWorkoutSessionWithSets?> =
+        manualWorkoutDao.observeManualSessionWithSets(sessionId)
+
+    override suspend fun getManualWorkout(sessionId: String): ManualWorkoutSessionWithSets? =
+        manualWorkoutDao.getManualSessionWithSets(sessionId)
+
+    override suspend fun saveManualWorkout(session: ManualWorkoutSessionEntity, sets: List<ManualWorkoutSetEntity>): String {
+        manualWorkoutDao.saveManualWorkoutSessionWithSets(session, sets)
+        return session.id
+    }
+
+    override suspend fun deleteManualWorkout(sessionId: String) {
+        manualWorkoutDao.deleteManualWorkoutWithSets(sessionId)
+    }
+
+    override fun observeCompletedSessionSummaries(): Flow<List<WorkoutSessionSummary>> =
+        combine(
+            dao.observeHistory(),
+            dao.observeAllCompletedSets(),
+        ) { sessions, completedSets ->
+            val setsBySession = completedSets.groupBy { it.sessionId }
+            sessions.map { session ->
+                val sessionSets = setsBySession[session.id].orEmpty()
+                mapToSummary(session, sessionSets)
+            }
+        }
+
+    override fun observeExerciseVolumeOverTime(exerciseId: String): Flow<List<ExerciseVolumePoint>> =
+        combine(
+            dao.observeHistory(),
+            dao.observeAllCompletedSets(),
+        ) { sessions, completedSets ->
+            val sessionMap = sessions.associateBy { it.id }
+            completedSets
+                .filter { it.exerciseId == exerciseId }
+                .groupBy { it.sessionId }
+                .mapNotNull { (sessionId, sets) ->
+                    val session = sessionMap[sessionId] ?: return@mapNotNull null
+                    val date = session.endedAt ?: session.startedAt
+                    val totalVol = sets.sumOf { it.weight * it.reps }
+                    val maxWt = sets.maxOfOrNull { it.weight } ?: 0.0
+                    val totalReps = sets.sumOf { it.reps }
+                    ExerciseVolumePoint(
+                        sessionId = sessionId,
+                        workoutName = session.workoutName,
+                        dateEpochMilli = date,
+                        volumeKg = totalVol,
+                        maxWeightKg = maxWt,
+                        totalReps = totalReps,
+                        setsCount = sets.size,
+                    )
+                }
+                .sortedBy { it.dateEpochMilli }
+        }
+
+    override suspend fun getSessionSummary(sessionId: String): WorkoutSessionSummary? {
+        val session = dao.getSession(sessionId) ?: return null
+        val sets = dao.getSessionSets(sessionId).filter { it.completed }
+        return mapToSummary(session, sets)
+    }
+
+    override suspend fun deleteWorkoutSession(sessionId: String) {
+        dao.deleteWorkoutSessionWithSets(sessionId)
+        manualWorkoutDao.deleteManualWorkoutWithSets(sessionId)
+    }
+
+    override suspend fun logPastWorkout(draft: PastWorkoutLogDraft): String {
+        val sessionId = UUID.randomUUID().toString()
+        val totalVolume = draft.exercises.sumOf { ex ->
+            ex.sets.sumOf { it.weightKg * it.reps }
+        }
+        val durationSec = (draft.durationMinutes.coerceAtLeast(1)) * 60
+        val session = WorkoutSessionEntity(
+            id = sessionId,
+            workoutId = "manual_history",
+            workoutName = draft.workoutName.ifBlank { "Workout Session" },
+            startedAt = draft.dateEpochMilli - (durationSec * 1000),
+            endedAt = draft.dateEpochMilli,
+            status = SessionStatus.COMPLETED,
+            notes = draft.notes,
+            rating = draft.rating,
+            totalVolume = totalVolume,
+            durationSeconds = durationSec,
+        )
+        val performedSets = draft.exercises.flatMapIndexed { exIdx, exercise ->
+            exercise.sets.mapIndexed { setIdx, set ->
+                PerformedSetEntity(
+                    id = UUID.randomUUID().toString(),
+                    sessionId = sessionId,
+                    workoutExerciseId = "manual:${exercise.exerciseId}:$exIdx",
+                    exerciseId = exercise.exerciseId,
+                    exerciseName = exercise.exerciseName,
+                    setNumber = setIdx + 1,
+                    reps = set.reps,
+                    weight = set.weightKg,
+                    completed = true,
+                    completedAt = draft.dateEpochMilli,
+                )
+            }
+        }
+        dao.upsertSession(session)
+        if (performedSets.isNotEmpty()) {
+            dao.upsertPerformedSets(performedSets)
+        }
+
+        // Save into dedicated ManualWorkout Room entities & DAO
+        val manualSession = ManualWorkoutSessionEntity(
+            id = sessionId,
+            workoutName = draft.workoutName.ifBlank { "Workout Session" },
+            sessionDate = draft.dateEpochMilli,
+            durationMinutes = draft.durationMinutes.toInt().coerceAtLeast(1),
+            notes = draft.notes,
+            rating = draft.rating,
+            totalVolumeKg = totalVolume,
+            totalReps = draft.exercises.sumOf { ex -> ex.sets.sumOf { it.reps } },
+            totalSets = draft.exercises.sumOf { it.sets.size },
+            createdAt = System.currentTimeMillis(),
+        )
+        val manualSets = draft.exercises.flatMapIndexed { _, exercise ->
+            exercise.sets.mapIndexed { setIdx, set ->
+                ManualWorkoutSetEntity(
+                    id = UUID.randomUUID().toString(),
+                    sessionId = sessionId,
+                    exerciseName = exercise.exerciseName,
+                    exerciseId = exercise.exerciseId,
+                    muscleGroup = "",
+                    setNumber = setIdx + 1,
+                    reps = set.reps,
+                    weightKg = set.weightKg,
+                    notes = "",
+                )
+            }
+        }
+        manualWorkoutDao.saveManualWorkoutSessionWithSets(manualSession, manualSets)
+
+        return sessionId
+    }
+
+    private fun mapToSummary(session: WorkoutSessionEntity, completedSets: List<PerformedSetEntity>): WorkoutSessionSummary {
+        val completedAt = session.endedAt ?: session.startedAt
+        val durationMins = (session.durationSeconds / 60).coerceAtLeast(1)
+        val durationFormatted = if (durationMins >= 60) {
+            "${durationMins / 60}h ${durationMins % 60}m"
+        } else {
+            "${durationMins}m"
+        }
+        val exerciseSummaries = completedSets
+            .groupBy { it.exerciseId to it.exerciseName }
+            .map { (pair, sets) ->
+                val (exId, exName) = pair
+                val totalVol = sets.sumOf { it.weight * it.reps }
+                val maxWt = sets.maxOfOrNull { it.weight } ?: 0.0
+                val totalReps = sets.sumOf { it.reps }
+                val setDetails = sets.map { s ->
+                    SetDetailSummary(
+                        setNumber = s.setNumber,
+                        weightKg = s.weight,
+                        reps = s.reps,
+                        volumeKg = s.weight * s.reps,
+                        isPr = s.isPr,
+                    )
+                }
+                ExerciseVolumeSummary(
+                    exerciseId = exId,
+                    exerciseName = exName,
+                    completedSets = sets.size,
+                    totalReps = totalReps,
+                    maxWeightKg = maxWt,
+                    totalVolumeKg = totalVol,
+                    setsDetail = setDetails,
+                )
+            }
+        val totalVolume = if (session.totalVolume > 0.0) session.totalVolume else completedSets.sumOf { it.weight * it.reps }
+        return WorkoutSessionSummary(
+            session = session,
+            completedAt = completedAt,
+            durationFormatted = durationFormatted,
+            totalVolumeKg = totalVolume,
+            completedSetsCount = completedSets.size,
+            totalRepsCount = completedSets.sumOf { it.reps },
+            exerciseSummaries = exerciseSummaries,
+        )
+    }
+
     override fun observePersonalRecords(): Flow<List<PersonalRecordEntity>> = dao.observePersonalRecords()
     override fun observeMeasurements(): Flow<List<BodyMeasurementEntity>> = dao.observeMeasurements()
     override fun observeProgressPhotos(): Flow<List<ProgressPhotoEntity>> = dao.observeProgressPhotos()
@@ -60,17 +269,173 @@ class GymRepositoryImpl @Inject constructor(
     override fun observeWeightLogs(): Flow<List<WeightLogEntity>> = dao.observeWeightLogs()
     override fun observeWeeklySchedule(): Flow<List<WeeklyScheduleEntity>> = dao.observeWeeklySchedule()
     override fun observeReminders(): Flow<List<ReminderEntity>> = dao.observeReminders()
+    override fun observeGymEquipments(): Flow<List<com.gymtracker.app.data.local.entity.GymEquipmentEntity>> = dao.observeGymEquipments()
+    override suspend fun getGymEquipments(): List<com.gymtracker.app.data.local.entity.GymEquipmentEntity> = dao.getGymEquipments()
+    override suspend fun addGymEquipment(equipment: com.gymtracker.app.data.local.entity.GymEquipmentEntity) = dao.upsertGymEquipment(equipment)
+    override suspend fun deleteGymEquipment(id: String) = dao.deleteGymEquipment(id)
+    override fun observeHealthProfile(): Flow<UserHealthProfileEntity?> =
+        dao.observeHealthProfile().map { profile ->
+            profile?.let { sanitizeLegacyHealthDefaults(it) }
+        }
+
+    override suspend fun getHealthProfile(): UserHealthProfileEntity {
+        val existing = dao.getHealthProfile()
+        if (existing != null) {
+            val sanitized = sanitizeLegacyHealthDefaults(existing)
+            if (sanitized != existing) {
+                dao.upsertHealthProfile(sanitized)
+            }
+            return sanitized
+        }
+        return UserHealthProfileEntity().also {
+            dao.upsertHealthProfile(it)
+        }
+    }
+
+    private fun sanitizeLegacyHealthDefaults(profile: UserHealthProfileEntity): UserHealthProfileEntity {
+        val legacyHealth = "Lower back sensitivity (avoid excessive axial loading), occasional knee discomfort"
+        val legacyInjuries = "Keep neutral spine; substitute barbell back squats with chest-supported machines or leg press"
+        val legacyMuscles = "Chest, Shoulders, Upper Back"
+        val needsSanitizing = profile.healthConditions == legacyHealth ||
+                profile.injuriesAndLimitations == legacyInjuries ||
+                profile.targetMuscles == legacyMuscles
+        return if (needsSanitizing) {
+            profile.copy(
+                healthConditions = if (profile.healthConditions == legacyHealth) "" else profile.healthConditions,
+                injuriesAndLimitations = if (profile.injuriesAndLimitations == legacyInjuries) "" else profile.injuriesAndLimitations,
+                targetMuscles = if (profile.targetMuscles == legacyMuscles) "" else profile.targetMuscles,
+            )
+        } else {
+            profile
+        }
+    }
+
+    override suspend fun updateHealthProfile(profile: UserHealthProfileEntity) {
+        dao.upsertHealthProfile(profile)
+    }
+    override fun observeGeminiSyncReports(): Flow<List<GeminiSyncReportEntity>> = dao.observeGeminiSyncReports()
+    override fun observeLatestGeminiSyncReport(): Flow<GeminiSyncReportEntity?> = dao.observeLatestGeminiSyncReport()
+    override suspend fun saveGeminiSyncReport(report: GeminiSyncReportEntity) {
+        dao.upsertGeminiSyncReport(report)
+    }
+
+    override suspend fun saveGeminiWorkoutAsCustomWorkout(option: GeminiWorkoutOption): String {
+        val allExercises = dao.getExercises().toMutableList()
+        val draftItems = option.exercises.map { geminiExercise ->
+            val existing = allExercises.firstOrNull { it.name.equals(geminiExercise.exerciseName, ignoreCase = true) }
+            val exerciseId = if (existing != null) {
+                existing.id
+            } else {
+                val muscle = runCatching { MuscleGroup.valueOf(geminiExercise.primaryMuscle.uppercase().replace(" ", "_")) }.getOrDefault(MuscleGroup.CHEST)
+                val equip = runCatching { Equipment.valueOf(geminiExercise.equipment.uppercase().replace(" ", "_")) }.getOrDefault(Equipment.MACHINE)
+                val newEntity = ExerciseEntity(
+                    name = geminiExercise.exerciseName,
+                    primaryMuscle = muscle,
+                    equipment = equip,
+                    difficulty = Difficulty.INTERMEDIATE,
+                    instructions = geminiExercise.instructions.ifBlank { "Perform with controlled cadence and focus on mind-muscle connection." } +
+                            if (geminiExercise.healthModification.isNotBlank()) "\n[Health safety note: ${geminiExercise.healthModification}]" else "",
+                    isCustom = true,
+                )
+                dao.upsertExercise(newEntity)
+                allExercises.add(newEntity)
+                newEntity.id
+            }
+
+            WorkoutExerciseDraft(
+                exerciseId = exerciseId,
+                notes = if (geminiExercise.targetRpe != null) "Target RPE: ${geminiExercise.targetRpe}" else "",
+                restSeconds = geminiExercise.restSeconds.coerceIn(15, 300),
+                setCount = geminiExercise.sets.coerceIn(1, 10),
+                repsMin = geminiExercise.repsMin.coerceIn(1, 100),
+                repsMax = geminiExercise.repsMax.coerceIn(1, 100),
+                weight = 0.0,
+                setType = SetType.NORMAL,
+            )
+        }
+
+        val draft = WorkoutDraft(
+            name = option.title,
+            description = "${option.splitType} • ${option.estimatedMinutes} min. ${option.healthFocusNote}",
+            splitType = option.splitType,
+            exercises = draftItems,
+        )
+        return createCustomWorkout(draft)
+    }
+
+    override suspend fun saveGeminiRoutinePlan(
+        result: GeminiWorkoutBuilderResult,
+        setAsSchedule: Boolean,
+    ): List<String> {
+        val createdIds = mutableListOf<String>()
+        val weekDays = listOf(
+            com.gymtracker.app.data.local.entity.WeekDay.MONDAY,
+            com.gymtracker.app.data.local.entity.WeekDay.TUESDAY,
+            com.gymtracker.app.data.local.entity.WeekDay.WEDNESDAY,
+            com.gymtracker.app.data.local.entity.WeekDay.THURSDAY,
+            com.gymtracker.app.data.local.entity.WeekDay.FRIDAY,
+            com.gymtracker.app.data.local.entity.WeekDay.SATURDAY,
+        )
+        if (setAsSchedule && result.options.isNotEmpty()) {
+            dao.clearSchedules()
+        }
+        for ((index, option) in result.options.withIndex()) {
+            val workoutId = saveGeminiWorkoutAsCustomWorkout(option)
+            createdIds.add(workoutId)
+            if (setAsSchedule && index < weekDays.size) {
+                dao.upsertSchedule(
+                    WeeklyScheduleEntity(
+                        weekDay = weekDays[index],
+                        workoutId = workoutId,
+                        workoutName = option.title,
+                    )
+                )
+            }
+        }
+        return createdIds
+    }
 
     override suspend fun seedInitialData() {
-        if (dao.exerciseCount() > 0) return
-        val exercises = ExerciseCatalog.defaultExercises()
-        dao.upsertExercises(exercises)
-        val graph = WorkoutTemplateCatalog.defaultTemplates(exercises)
-        dao.upsertWorkouts(graph.workouts)
-        dao.upsertWorkoutExercises(graph.workoutExercises)
-        dao.upsertSetTemplates(graph.setTemplates)
-        dao.upsertSchedules(graph.schedules)
-        dao.upsertUserProfile(UserProfileEntity())
+        runCatching {
+            if (dao.exerciseCount() == 0) {
+                val exercises = ExerciseCatalog.defaultExercises()
+                dao.upsertExercises(exercises)
+                val graph = WorkoutTemplateCatalog.defaultTemplates(exercises)
+                dao.upsertWorkouts(graph.workouts)
+                dao.upsertWorkoutExercises(graph.workoutExercises)
+                dao.upsertSetTemplates(graph.setTemplates)
+                dao.upsertSchedules(graph.schedules)
+                dao.upsertUserProfile(UserProfileEntity())
+                val splitSchedules = WorkoutTemplateCatalog.createScheduleForSplit(UserProfileEntity().preferredSplit, graph.workouts)
+                if (splitSchedules.isNotEmpty()) {
+                    dao.upsertSchedules(splitSchedules)
+                }
+            }
+            val profile = dao.getUserProfile()
+            if (profile != null && profile.preferredSplit.isNotBlank()) {
+                val currentSchedules = dao.getWeeklySchedule()
+                if (currentSchedules.isEmpty() || currentSchedules.size <= 3) {
+                    applyRoutineSplitSchedule(profile.preferredSplit)
+                }
+            }
+
+            // Remove any dummy/sample workout history sessions previously seeded
+            val dummyNames = setOf(
+                "Push Power Routine",
+                "Leg Day Heavy Squats",
+                "Upper Body Hypertrophy",
+            )
+            val dummyWorkoutIds = setOf("template:push", "template:legs", "template:upper")
+            val existingSessions = dao.getSessions()
+            for (s in existingSessions) {
+                if (s.workoutName in dummyNames || s.workoutId in dummyWorkoutIds) {
+                    dao.deleteWorkoutSessionWithSets(s.id)
+                    manualWorkoutDao.deleteManualWorkoutWithSets(s.id)
+                }
+            }
+        }.onFailure { e ->
+            android.util.Log.e("GymRepository", "Error seeding initial data", e)
+        }
     }
 
     override suspend fun dashboardStats(todayEpochDay: Long): DashboardStats {
@@ -91,8 +456,20 @@ class GymRepositoryImpl @Inject constructor(
         )
     }
 
+    override suspend fun applyRoutineSplitSchedule(splitName: String) {
+        val workouts = dao.getWorkouts()
+        val schedules = WorkoutTemplateCatalog.createScheduleForSplit(splitName, workouts)
+        if (schedules.isNotEmpty()) {
+            dao.clearSchedules()
+            dao.upsertSchedules(schedules)
+        }
+    }
+
     override suspend fun createOrUpdateProfile(profile: UserProfileEntity) {
         dao.upsertUserProfile(profile.copy(updatedAt = System.currentTimeMillis()))
+        if (profile.preferredSplit.isNotBlank()) {
+            applyRoutineSplitSchedule(profile.preferredSplit)
+        }
     }
 
     override suspend fun createCustomWorkout(draft: WorkoutDraft): String {

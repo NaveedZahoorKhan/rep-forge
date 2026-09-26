@@ -14,11 +14,17 @@ class GymTrackerApplication : Application(), Configuration.Provider {
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
-            .setWorkerFactory(workerFactory)
+            .apply {
+                if (::workerFactory.isInitialized) {
+                    setWorkerFactory(workerFactory)
+                }
+            }
             .build()
 
     override fun onCreate() {
         super.onCreate()
-        notificationHelper.ensureChannels()
+        if (::notificationHelper.isInitialized) {
+            notificationHelper.ensureChannels()
+        }
     }
 }

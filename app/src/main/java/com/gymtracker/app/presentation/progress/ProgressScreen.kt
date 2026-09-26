@@ -24,6 +24,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -79,8 +80,16 @@ class ProgressViewModel @Inject constructor(
         repository.observePersonalRecords(),
         repository.observeWeightLogs(),
         repository.observeHistory(),
-    ) { exercises, measurements, photos, records, weights, history ->
-        ProgressUiState(exercises, measurements, photos, records, weights, history)
+    ) { array: Array<Any?> ->
+        @Suppress("UNCHECKED_CAST")
+        ProgressUiState(
+            exercises = array[0] as? List<ExerciseEntity> ?: emptyList(),
+            measurements = array[1] as? List<BodyMeasurementEntity> ?: emptyList(),
+            photos = array[2] as? List<ProgressPhotoEntity> ?: emptyList(),
+            records = array[3] as? List<PersonalRecordEntity> ?: emptyList(),
+            weights = array[4] as? List<WeightLogEntity> ?: emptyList(),
+            history = array[5] as? List<WorkoutSessionEntity> ?: emptyList(),
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ProgressUiState())
 
     var selectedExerciseId by mutableStateOf<String?>(null)

@@ -67,11 +67,26 @@ interface GymDao {
     @Query("SELECT * FROM workout_sessions WHERE id = :id")
     suspend fun getSession(id: String): WorkoutSessionEntity?
 
-    @Query("SELECT * FROM workout_sessions WHERE status != 'ACTIVE' ORDER BY startedAt DESC")
+    @Query("SELECT * FROM workout_sessions WHERE status != 'ACTIVE' ORDER BY coalesce(endedAt, startedAt) DESC")
     fun observeHistory(): Flow<List<WorkoutSessionEntity>>
 
-    @Query("SELECT * FROM workout_sessions ORDER BY startedAt DESC")
+    @Query("SELECT * FROM workout_sessions ORDER BY coalesce(endedAt, startedAt) DESC")
     suspend fun getSessions(): List<WorkoutSessionEntity>
+
+    @Query("DELETE FROM workout_sessions WHERE id = :sessionId")
+    suspend fun deleteSession(sessionId: String)
+
+    @Query("DELETE FROM performed_sets WHERE sessionId = :sessionId")
+    suspend fun deleteSessionSets(sessionId: String)
+
+    @Query("SELECT * FROM performed_sets WHERE completed = 1 ORDER BY coalesce(completedAt, 0) ASC")
+    fun observeAllCompletedSets(): Flow<List<PerformedSetEntity>>
+
+    @Transaction
+    suspend fun deleteWorkoutSessionWithSets(sessionId: String) {
+        deleteSessionSets(sessionId)
+        deleteSession(sessionId)
+    }
 
     @Query("SELECT * FROM performed_sets WHERE sessionId = :sessionId ORDER BY workoutExerciseId, setNumber")
     fun observeSessionSets(sessionId: String): Flow<List<PerformedSetEntity>>
@@ -179,6 +194,45 @@ interface GymDao {
     @Upsert suspend fun upsertReminders(items: List<ReminderEntity>)
     @Upsert suspend fun upsertReminder(item: ReminderEntity)
 
+    @Query("SELECT * FROM gym_equipments ORDER BY createdAt DESC")
+    fun observeGymEquipments(): Flow<List<com.gymtracker.app.data.local.entity.GymEquipmentEntity>>
+
+    @Query("SELECT * FROM gym_equipments ORDER BY createdAt DESC")
+    suspend fun getGymEquipments(): List<com.gymtracker.app.data.local.entity.GymEquipmentEntity>
+
+    @Upsert
+    suspend fun upsertGymEquipment(item: com.gymtracker.app.data.local.entity.GymEquipmentEntity)
+
+    @Upsert
+    suspend fun upsertGymEquipments(items: List<com.gymtracker.app.data.local.entity.GymEquipmentEntity>)
+
+    @Query("DELETE FROM gym_equipments WHERE id = :id")
+    suspend fun deleteGymEquipment(id: String)
+
+    @Query("DELETE FROM gym_equipments")
+    suspend fun clearGymEquipments()
+
+    @Query("SELECT * FROM user_health_profiles WHERE id = 'me' LIMIT 1")
+    fun observeHealthProfile(): Flow<com.gymtracker.app.data.local.entity.UserHealthProfileEntity?>
+
+    @Query("SELECT * FROM user_health_profiles WHERE id = 'me' LIMIT 1")
+    suspend fun getHealthProfile(): com.gymtracker.app.data.local.entity.UserHealthProfileEntity?
+
+    @Upsert
+    suspend fun upsertHealthProfile(item: com.gymtracker.app.data.local.entity.UserHealthProfileEntity)
+
+    @Query("SELECT * FROM gemini_sync_reports ORDER BY syncedAt DESC")
+    fun observeGeminiSyncReports(): Flow<List<com.gymtracker.app.data.local.entity.GeminiSyncReportEntity>>
+
+    @Query("SELECT * FROM gemini_sync_reports ORDER BY syncedAt DESC LIMIT 1")
+    fun observeLatestGeminiSyncReport(): Flow<com.gymtracker.app.data.local.entity.GeminiSyncReportEntity?>
+
+    @Upsert
+    suspend fun upsertGeminiSyncReport(item: com.gymtracker.app.data.local.entity.GeminiSyncReportEntity)
+
+    @Query("DELETE FROM gemini_sync_reports")
+    suspend fun clearGeminiSyncReports()
+
     @Query("DELETE FROM workouts WHERE id = :id AND isTemplate = 0")
     suspend fun deleteCustomWorkout(id: String)
 
@@ -235,6 +289,8 @@ interface GymDao {
 
     @Transaction
     suspend fun deleteAllUserData() {
+        clearGymEquipments()
+        clearGeminiSyncReports()
         clearReminders()
         clearSchedules()
         clearUserProfile()

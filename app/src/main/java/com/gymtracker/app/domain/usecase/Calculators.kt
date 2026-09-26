@@ -63,6 +63,18 @@ object ProgressiveOverloadUseCase {
 }
 
 object NutritionCalculator {
+    data class NutritionTargetPlan(
+        val calorieGoal: Int,
+        val proteinGoalG: Double,
+        val carbsGoalG: Double,
+        val fatGoalG: Double,
+        val fiberGoalG: Double,
+        val waterGoalMl: Int,
+        val bmrKcal: Int,
+        val tdeeKcal: Int,
+        val goalAdjustmentKcal: Int,
+    )
+
     fun bmr(
         gender: Gender,
         weightKg: Double,
@@ -86,6 +98,69 @@ object NutritionCalculator {
     }
 
     fun tdee(bmr: Double, activityMultiplier: Double): Double = bmr * activityMultiplier
+
+    fun autoCalculateTargetCalories(
+        weightKg: Double,
+        heightCm: Double,
+        gender: Gender = Gender.MALE,
+        age: Int = 28,
+        activityMultiplier: Double = 1.55,
+        goal: String = "Lose weight",
+    ): Int {
+        return autoCalculateNutritionPlan(
+            weightKg = weightKg,
+            heightCm = heightCm,
+            gender = gender,
+            age = age,
+            activityMultiplier = activityMultiplier,
+            goal = goal,
+        ).calorieGoal
+    }
+
+    fun autoCalculateNutritionPlan(
+        weightKg: Double,
+        heightCm: Double,
+        gender: Gender = Gender.MALE,
+        age: Int = 28,
+        activityMultiplier: Double = 1.55,
+        goal: String = "Lose weight",
+        formula: BmrFormula = BmrFormula.MIFFLIN_ST_JEOR,
+    ): NutritionTargetPlan {
+        val safeWeight = weightKg.coerceIn(30.0, 250.0)
+        val safeHeight = heightCm.coerceIn(100.0, 250.0)
+        val safeAge = age.coerceIn(14, 100)
+        val bmrVal = bmr(gender, safeWeight, safeHeight, safeAge, formula)
+        val tdeeVal = tdee(bmrVal, activityMultiplier)
+
+        val normalizedGoal = goal.lowercase()
+        val adjustment = when {
+            normalizedGoal.contains("lose") || normalizedGoal.contains("cut") || normalizedGoal.contains("fat") -> -500
+            normalizedGoal.contains("build") || normalizedGoal.contains("muscle") || normalizedGoal.contains("gain") || normalizedGoal.contains("bulk") || normalizedGoal.contains("strength") -> 350
+            else -> 0
+        }
+
+        val minCalories = if (gender == Gender.MALE) 1500 else 1200
+        val targetCalories = (tdeeVal + adjustment).toInt().coerceAtLeast(minCalories)
+
+        val proteinG = (safeWeight * 2.0).coerceIn(70.0, 300.0)
+        val fatG = ((targetCalories * 0.25) / 9.0).coerceIn(35.0, 150.0)
+        val remainingKcalForCarbs = (targetCalories - (proteinG * 4.0) - (fatG * 9.0)).coerceAtLeast(200.0)
+        val carbsG = (remainingKcalForCarbs / 4.0).coerceAtLeast(50.0)
+        val fiberG = (targetCalories / 1000.0 * 14.0).coerceIn(25.0, 50.0)
+        val waterMl = (safeWeight * 35.0).toInt().coerceIn(2000, 4500)
+
+        return NutritionTargetPlan(
+            calorieGoal = targetCalories,
+            proteinGoalG = (proteinG * 10).toInt() / 10.0,
+            carbsGoalG = (carbsG * 10).toInt() / 10.0,
+            fatGoalG = (fatG * 10).toInt() / 10.0,
+            fiberGoalG = (fiberG * 10).toInt() / 10.0,
+            waterGoalMl = waterMl,
+            bmrKcal = bmrVal.toInt(),
+            tdeeKcal = tdeeVal.toInt(),
+            goalAdjustmentKcal = adjustment,
+        )
+    }
 }
 
 object BodyFatCalculator {
