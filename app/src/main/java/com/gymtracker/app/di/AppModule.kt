@@ -50,4 +50,8 @@ abstract class RepositoryModule {
     @Binds
     @Singleton
     abstract fun bindNotificationHelper(impl: com.gymtracker.app.notification.NotificationHelperImpl): com.gymtracker.app.notification.NotificationHelper
+
+    @Binds
+    @Singleton
+    abstract fun bindWorkoutSoundPlayer(impl: com.gymtracker.app.notification.WorkoutSoundPlayerImpl): com.gymtracker.app.notification.WorkoutSoundPlayer
 }

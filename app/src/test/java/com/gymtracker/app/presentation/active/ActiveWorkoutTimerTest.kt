@@ -192,7 +192,12 @@ class ActiveWorkoutTimerTest {
             override fun showWorkoutReminder(title: String, body: String) {}
         }
 
-        val vm = ActiveWorkoutViewModel(dummyRepo, helperInstance)
+        val soundPlayerInstance = object : com.gymtracker.app.notification.WorkoutSoundPlayer {
+            override fun playRestCompleteSound() {}
+            override fun vibrateRestComplete() {}
+        }
+
+        val vm = ActiveWorkoutViewModel(dummyRepo, helperInstance, soundPlayerInstance)
         return Pair(vm, dummyRepo)
     }
 }

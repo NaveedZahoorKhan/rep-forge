@@ -1,6 +1,7 @@
 package com.gymtracker.app.presentation.active
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -8,6 +9,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,22 +17,27 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Calculate
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -40,6 +47,8 @@ import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -67,6 +76,7 @@ import com.gymtracker.app.domain.usecase.OneRepMaxCalculator
 import com.gymtracker.app.domain.usecase.PlateCalculator
 import com.gymtracker.app.domain.usecase.ProgressiveOverloadUseCase
 import com.gymtracker.app.notification.NotificationHelper
+import com.gymtracker.app.notification.WorkoutSoundPlayer
 import com.gymtracker.app.presentation.navigation.ActiveWorkoutRoute
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -87,6 +97,7 @@ import kotlinx.coroutines.launch
 class ActiveWorkoutViewModel @Inject constructor(
     private val repository: GymRepository,
     private val notificationHelper: NotificationHelper,
+    private val soundPlayer: WorkoutSoundPlayer,
 ) : ViewModel() {
     private val sessionId = MutableStateFlow("")
     private var routeKey = ""
@@ -122,9 +133,12 @@ class ActiveWorkoutViewModel @Inject constructor(
         }
     }
 
-    fun complete(set: PerformedSetEntity, reps: Int, weight: Double, rpe: Double?, rir: Int?, notes: String = "") {
+    /**
+     * Simple workout logging: saves weight and reps. RPE & RIR are omitted to keep logging simple.
+     */
+    fun complete(set: PerformedSetEntity, reps: Int, weight: Double, notes: String = "") {
         viewModelScope.launch {
-            val completed = repository.completeSet(set.id, reps, weight, rpe, rir, notes)
+            val completed = repository.completeSet(set.id, reps, weight, null, null, notes)
             val rest = if (completed.restSeconds > 0) completed.restSeconds else 90
             startRest(rest, completed.exerciseName)
         }
@@ -152,6 +166,31 @@ class ActiveWorkoutViewModel @Inject constructor(
         }
     }
 
+    private suspend fun triggerRestExpiredAlert() {
+        isTimerRunning = false
+        isTimerPaused = false
+        isTimerFinished = true
+
+        val profile = repository.observeUserProfile().first()
+        val soundEnabled = profile?.soundEnabled ?: true
+        val vibrationEnabled = profile?.vibrationEnabled ?: true
+
+        // Play audible gym beeps directly via speaker
+        if (soundEnabled) {
+            soundPlayer.playRestCompleteSound()
+        }
+        // Physical vibration feedback
+        if (vibrationEnabled) {
+            soundPlayer.vibrateRestComplete()
+        }
+
+        notificationHelper.showRestComplete(
+            exerciseName = timerExercise,
+            sound = soundEnabled,
+            vibration = vibrationEnabled,
+        )
+    }
+
     fun startRest(seconds: Int, exerciseName: String = "Rest Interval") {
         timerJob?.cancel()
         val total = seconds.coerceAtLeast(1)
@@ -170,15 +209,7 @@ class ActiveWorkoutViewModel @Inject constructor(
                 }
             }
             if (isActive && restRemaining <= 0) {
-                isTimerRunning = false
-                isTimerPaused = false
-                isTimerFinished = true
-                val profile = repository.observeUserProfile().first()
-                notificationHelper.showRestComplete(
-                    exerciseName = timerExercise,
-                    sound = profile?.soundEnabled ?: true,
-                    vibration = profile?.vibrationEnabled ?: true,
-                )
+                triggerRestExpiredAlert()
             }
         }
     }
@@ -205,15 +236,7 @@ class ActiveWorkoutViewModel @Inject constructor(
                     }
                 }
                 if (isActive && restRemaining <= 0) {
-                    isTimerRunning = false
-                    isTimerPaused = false
-                    isTimerFinished = true
-                    val profile = repository.observeUserProfile().first()
-                    notificationHelper.showRestComplete(
-                        exerciseName = timerExercise,
-                        sound = profile?.soundEnabled ?: true,
-                        vibration = profile?.vibrationEnabled ?: true,
-                    )
+                    triggerRestExpiredAlert()
                 }
             }
         }
@@ -286,13 +309,69 @@ fun ActiveWorkoutRouteScreen(
     var plateWeight by remember { mutableDoubleStateOf(100.0) }
     var formula by remember { mutableStateOf(OneRepMaxFormula.EPLEY) }
     var showCalculators by remember { mutableStateOf(false) }
+
+    // Dialog state for clean, safe Cancel and Finish actions
+    var showCancelConfirmDialog by remember { mutableStateOf(false) }
+    var showFinishConfirmDialog by remember { mutableStateOf(false) }
+
     val volume = sets.filter { it.completed }.sumOf { it.weight * it.reps }
     val latestSet = sets.lastOrNull { it.completed }
     val oneRm = latestSet?.let { OneRepMaxCalculator.estimate(it.weight, it.reps, formula) } ?: 0.0
     val plates = PlateCalculator.calculate(plateWeight)
     val suggestion = ProgressiveOverloadUseCase.suggestion(sets.filter { it.completed }, targetRepsMax = 12, lowerBodyLift = false)
 
+    val completedCount = sets.count { it.completed }
+    val remainingCount = sets.size - completedCount
+
     Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(
+                            text = "Active Workout",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            text = "${volume.toInt()} kg volume • $completedCount/${sets.size} sets",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = { showCancelConfirmDialog = true }) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Discard / Cancel workout",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
+                actions = {
+                    Button(
+                        onClick = {
+                            if (remainingCount > 0) {
+                                showFinishConfirmDialog = true
+                            } else {
+                                viewModel.finish(onDone)
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                    ) {
+                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Finish", fontWeight = FontWeight.Bold)
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
+            )
+        },
         bottomBar = {
             PersistentRestTimerComponent(
                 remainingSeconds = viewModel.restRemaining,
@@ -320,25 +399,10 @@ fun ActiveWorkoutRouteScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column {
-                    Text("Active workout", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Text("${volume.toInt()} kg volume", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { viewModel.cancel(onDone) }) { Text("Cancel") }
-                    Button(
-                        onClick = { viewModel.finish(onDone) },
-                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                    ) {
-                        Text("Finish Workout")
-                    }
-                }
-            }
-
+            // Quick remaining status banner with Complete All action
             if (sets.any { !it.completed }) {
                 Surface(
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(8.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -347,16 +411,19 @@ fun ActiveWorkoutRouteScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        val remaining = sets.count { !it.completed }
-                        Text("$remaining sets remaining", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                        Text(
+                            "$remainingCount set(s) left",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium
+                        )
                         TextButton(
                             onClick = {
                                 sets.filter { !it.completed }.forEach { set ->
-                                    viewModel.complete(set, set.reps, set.weight, set.rpe, set.rir)
+                                    viewModel.complete(set, set.reps, set.weight)
                                 }
                             }
                         ) {
-                            Text("Complete All Remaining", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("Complete All", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -367,7 +434,7 @@ fun ActiveWorkoutRouteScreen(
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surface
                 ),
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)
+                shape = RoundedCornerShape(10.dp)
             ) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                     Row(
@@ -398,100 +465,251 @@ fun ActiveWorkoutRouteScreen(
                                 label = { Text("Bar weight kg") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 modifier = Modifier.weight(1f),
+                                singleLine = true,
                             )
-                            Column(Modifier.weight(1f)) {
-                                Text("Per side: ${plates.sidePlates.joinToString(" + ").ifBlank { "none" }}")
-                                Text("1RM ${oneRm.toInt()} kg", fontWeight = FontWeight.Bold)
+                            Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                OneRepMaxFormula.entries.forEach { f ->
+                                    FilterChip(
+                                        selected = formula == f,
+                                        onClick = { formula = f },
+                                        label = { Text(f.name.take(3), fontSize = 11.sp) }
+                                    )
+                                }
                             }
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
-                            OneRepMaxFormula.entries.forEach {
-                                FilterChip(selected = formula == it, onClick = { formula = it }, label = { Text(it.name.lowercase().replaceFirstChar { c -> c.titlecase() }) })
-                            }
+                        val plateText = if (plates.sidePlates.isEmpty()) "None (bar only)" else plates.sidePlates.joinToString { "${it}kg" }
+                        Text(
+                            "Plates per side: $plateText",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                        suggestion?.let {
+                            Text(
+                                "Coach: $it",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
                         }
-                        Text(suggestion, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
                     }
                 }
             }
 
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.weight(1f)) {
+            // Sets List
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 items(sets, key = { it.id }) { set ->
                     SwipeSetRow(
                         set = set,
-                        onComplete = { reps, weight, rpe, rir ->
-                            viewModel.complete(set, reps, weight, rpe, rir)
+                        onComplete = { reps, weight ->
+                            viewModel.complete(set, reps, weight)
                         },
                         onLongPress = { editingSet = set },
                     )
+                }
+
+                // Dedicated bottom Finish & Discard Actions Card
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            if (remainingCount > 0) {
+                                Text(
+                                    "$remainingCount unlogged set(s) remaining",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            } else {
+                                Text(
+                                    "All sets logged! Ready to save session.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+
+                            Button(
+                                onClick = {
+                                    if (remainingCount > 0) {
+                                        showFinishConfirmDialog = true
+                                    } else {
+                                        viewModel.finish(onDone)
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth().height(48.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Finish Workout", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            }
+
+                            TextButton(
+                                onClick = { showCancelConfirmDialog = true },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "Discard / Cancel Workout",
+                                    color = MaterialTheme.colorScheme.error,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 
-    editingSet?.let { set ->
+    // Dialog for editing notes or manual set details on long-press
+    editingSet?.let { target ->
         SetOptionsDialog(
-            set = set,
+            set = target,
             onDismiss = { editingSet = null },
-            onSave = {
-                viewModel.update(it)
+            onSave = { updated ->
+                viewModel.update(updated)
                 editingSet = null
             },
         )
     }
+
+    // Confirmation dialog to discard / cancel workout
+    if (showCancelConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showCancelConfirmDialog = false },
+            title = { Text("Discard Workout?") },
+            text = { Text("Are you sure you want to cancel? Any sets completed in this session will not be saved.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showCancelConfirmDialog = false
+                        viewModel.cancel(onDone)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                ) {
+                    Text("Discard Workout")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCancelConfirmDialog = false }) {
+                    Text("Keep Working Out")
+                }
+            }
+        )
+    }
+
+    // Confirmation dialog when finishing with uncompleted sets
+    if (showFinishConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showFinishConfirmDialog = false },
+            title = { Text("Finish Workout?") },
+            text = { Text("You still have $remainingCount uncompleted set(s). Do you want to finish and save your progress now?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showFinishConfirmDialog = false
+                        viewModel.finish(onDone)
+                    },
+                ) {
+                    Text("Finish & Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showFinishConfirmDialog = false }) {
+                    Text("Back to Workout")
+                }
+            }
+        )
+    }
 }
 
+/**
+ * Simple, streamlined set logging row.
+ * Displays Weight (kg) and Reps with quick stepper chips.
+ * RPE and RIR have been removed to keep logging simple and fast.
+ */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun SwipeSetRow(
     set: PerformedSetEntity,
-    onComplete: (Int, Double, Double?, Int?) -> Unit,
+    onComplete: (reps: Int, weight: Double) -> Unit,
     onLongPress: () -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
     var reps by remember(set.id, set.reps) { mutableStateOf(set.reps.toString()) }
     var weight by remember(set.id, set.weight) { mutableStateOf(set.weight.toString()) }
-    var rpe by remember(set.id, set.rpe) { mutableStateOf(set.rpe?.toString().orEmpty()) }
-    var rir by remember(set.id, set.rir) { mutableStateOf(set.rir?.toString().orEmpty()) }
+
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = {
             if (it != SwipeToDismissBoxValue.Settled && !set.completed) {
                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                onComplete(reps.toIntOrNull() ?: set.reps, weight.toDoubleOrNull() ?: set.weight, rpe.toDoubleOrNull(), rir.toIntOrNull())
+                onComplete(reps.toIntOrNull() ?: set.reps, weight.toDoubleOrNull() ?: set.weight)
             }
             false
         }
     )
+
     SwipeToDismissBox(
         state = dismissState,
         backgroundContent = {
             Box(
-                Modifier.fillMaxSize().background(MaterialTheme.colorScheme.primaryContainer).padding(16.dp),
+                Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.primaryContainer)
+                    .padding(16.dp),
                 contentAlignment = Alignment.CenterEnd,
-            ) { Text("Complete", color = MaterialTheme.colorScheme.onPrimaryContainer) }
+            ) { Text("Complete ✓", color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold) }
         },
     ) {
         val color by animateColorAsState(
-            targetValue = if (set.completed) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+            targetValue = if (set.completed) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surface,
             label = "setColor",
         )
         Card(
             modifier = Modifier.combinedClickable(onClick = {}, onLongClick = onLongPress),
             colors = CardDefaults.cardColors(containerColor = color),
+            border = BorderStroke(
+                width = if (set.completed) 1.5.dp else 1.dp,
+                color = if (set.completed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+            ),
         ) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Header: Exercise Name, Set #, PR badge
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Column {
-                        Text("${set.exerciseName} - Set ${set.setNumber}", fontWeight = FontWeight.Bold)
+                    Column(Modifier.weight(1f)) {
+                        Text("${set.exerciseName} • Set ${set.setNumber}", fontWeight = FontWeight.Bold)
                         if (set.notes.isNotBlank()) {
                             Text(set.notes, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     if (set.isPr) {
                         Surface(
-                            shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp),
+                            shape = RoundedCornerShape(4.dp),
                             color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.2f),
                         ) {
-                            Text("PR", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp), fontSize = 11.sp)
+                            Text("🏆 PR", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp), fontSize = 11.sp)
                         }
                     }
                 }
@@ -539,32 +757,33 @@ private fun SwipeSetRow(
                     }
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Streamlined Inputs: Only Weight (kg) and Reps
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    SmallField("Weight (kg)", weight, { weight = it }, Modifier.weight(1f))
                     SmallField("Reps", reps, { reps = it }, Modifier.weight(1f))
-                    SmallField("Weight kg", weight, { weight = it }, Modifier.weight(1f))
-                    SmallField("RPE", rpe, { rpe = it }, Modifier.weight(1f))
-                    SmallField("RIR", rir, { rir = it }, Modifier.weight(1f))
                 }
 
+                // Log / Completed Button
                 Button(
                     onClick = {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onComplete(reps.toIntOrNull() ?: set.reps, weight.toDoubleOrNull() ?: set.weight, rpe.toDoubleOrNull(), rir.toIntOrNull())
+                        onComplete(reps.toIntOrNull() ?: set.reps, weight.toDoubleOrNull() ?: set.weight)
                     },
                     colors = if (set.completed) {
-                        androidx.compose.material3.ButtonDefaults.buttonColors(
+                        ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primaryContainer,
                             contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                     } else {
-                        androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().height(42.dp),
+                    shape = RoundedCornerShape(8.dp),
                 ) {
                     if (set.completed) {
-                        Text("Completed ✓ (Tap to update)", fontWeight = FontWeight.SemiBold)
+                        Text("Completed ✓ (Tap to update)", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                     } else {
-                        Text("Log Set ${set.setNumber} (${weight}kg × ${reps} reps)", fontWeight = FontWeight.Bold)
+                        Text("Log Set ${set.setNumber} (${weight}kg × ${reps} reps)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
                 }
             }
