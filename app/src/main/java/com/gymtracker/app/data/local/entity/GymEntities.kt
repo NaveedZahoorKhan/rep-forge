@@ -221,7 +221,30 @@ data class UserProfileEntity(
     val onboardingComplete: Boolean = false,
     val cloudSyncEnabled: Boolean = false,
     val analyticsOptIn: Boolean = false,
+    val googleLinked: Boolean = false,
+    val googleEmail: String? = null,
+    val googleDisplayName: String? = null,
+    val googlePhotoUrl: String? = null,
+    val googleId: String? = null,
+    val healthConnectLinked: Boolean = false,
+    val healthLastSyncedAt: Long? = null,
+    val healthSyncWorkouts: Boolean = true,
+    val healthSyncWeights: Boolean = true,
+    val healthSyncHydration: Boolean = true,
+    val healthSyncSteps: Boolean = true,
     val updatedAt: Long = System.currentTimeMillis(),
+)
+
+@Serializable
+@Entity(tableName = "health_sync_logs", indices = [Index("syncedAt")])
+data class HealthSyncLogEntity(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val syncedAt: Long = System.currentTimeMillis(),
+    val category: String, // "WORKOUT", "WEIGHT", "HYDRATION", "STEPS", "FULL_SYNC"
+    val summary: String,
+    val itemCount: Int = 1,
+    val status: String = "SUCCESS", // "SUCCESS", "PENDING", "FAILED"
+    val details: String = "",
 )
 
 @Serializable

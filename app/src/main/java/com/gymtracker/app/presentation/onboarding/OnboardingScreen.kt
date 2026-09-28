@@ -1,6 +1,7 @@
 package com.gymtracker.app.presentation.onboarding
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
 import android.net.Uri
@@ -67,6 +68,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import com.gymtracker.app.domain.usecase.NutritionCalculator
+import com.gymtracker.app.data.auth.GoogleAuthService
+import com.gymtracker.app.presentation.components.GoogleAccountProfileCard
+import com.gymtracker.app.presentation.components.GoogleLogoIcon
+import com.gymtracker.app.presentation.components.GoogleSignInButton
+import com.gymtracker.app.presentation.components.GoogleSignInOptionsDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -122,6 +128,7 @@ data class OnboardingUiState(
 @HiltViewModel
 class OnboardingViewModel @Inject constructor(
     private val repository: GymRepository,
+    private val googleAuthService: GoogleAuthService,
     private val geminiApiClient: GeminiApiClient,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
@@ -134,6 +141,50 @@ class OnboardingViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(OnboardingUiState())
     val uiState: StateFlow<OnboardingUiState> = _uiState.asStateFlow()
+
+    fun getGoogleSignInIntent(): Intent = googleAuthService.getSignInIntent()
+
+    fun handleGoogleSignIn(data: Intent?, onUserLoaded: (name: String) -> Unit) {
+        viewModelScope.launch {
+            googleAuthService.handleSignInResult(data).fold(
+                onSuccess = { user ->
+                    repository.updateUserGoogleAuth(
+                        googleLinked = true,
+                        googleEmail = user.email,
+                        googleDisplayName = user.displayName,
+                        googlePhotoUrl = user.photoUrl,
+                        googleId = user.id,
+                    )
+                    repository.updateHealthConnectStatus(linked = true)
+                    onUserLoaded(user.displayName)
+                },
+                onFailure = { error ->
+                    _uiState.update { it.copy(errorMessage = error.message ?: "Google sign-in failed") }
+                }
+            )
+        }
+    }
+
+    fun quickGoogleSignIn(email: String, name: String, onUserLoaded: (name: String) -> Unit) {
+        viewModelScope.launch {
+            googleAuthService.quickSignIn(email, name).fold(
+                onSuccess = { user ->
+                    repository.updateUserGoogleAuth(
+                        googleLinked = true,
+                        googleEmail = user.email,
+                        googleDisplayName = user.displayName,
+                        googlePhotoUrl = user.photoUrl,
+                        googleId = user.id,
+                    )
+                    repository.updateHealthConnectStatus(linked = true)
+                    onUserLoaded(user.displayName)
+                },
+                onFailure = { error ->
+                    _uiState.update { it.copy(errorMessage = error.message ?: "Sign-in failed") }
+                }
+            )
+        }
+    }
 
     fun setStep(step: Int) {
         _uiState.update { it.copy(currentStep = step.coerceIn(0, 2), errorMessage = null) }
@@ -277,6 +328,8 @@ fun OnboardingScreen(
     val equipments by viewModel.equipments.collectAsStateWithLifecycle()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
+    var showGoogleDialog by remember { mutableStateOf(false) }
+
     // Step 1 Profile & Preferences state
     // Default gender set explicitly to MALE as requested
     var name by remember(storedProfile?.displayName) { mutableStateOf(storedProfile?.displayName ?: "Athlete") }
@@ -288,6 +341,12 @@ fun OnboardingScreen(
     var height by remember(storedProfile?.heightCm) { mutableStateOf((storedProfile?.heightCm ?: 175.0).toString()) }
     var weight by remember(storedProfile?.weightKg) { mutableStateOf((storedProfile?.weightKg ?: 75.0).toString()) }
     var calories by remember(storedProfile?.calorieGoal) { mutableStateOf((storedProfile?.calorieGoal ?: 2100).toString()) }
+
+    val signInLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        viewModel.handleGoogleSignIn(result.data) { loadedName ->
+            name = loadedName
+        }
+    }
 
     fun computeCalories(
         wStr: String = weight,
@@ -441,6 +500,10 @@ fun OnboardingScreen(
                     calories = calories,
                     onCaloriesChange = { calories = it },
                     onAutoCalculateCalories = { calories = computeCalories().toString() },
+                    isGoogleLinked = storedProfile?.googleLinked == true,
+                    googleEmail = storedProfile?.googleEmail,
+                    onSignInGoogle = { showGoogleDialog = true },
+                    onQuickConnectGoogle = { showGoogleDialog = true },
                     onNext = { viewModel.setStep(1) },
                 )
 
@@ -492,6 +555,22 @@ fun OnboardingScreen(
             }
         }
     }
+
+    if (showGoogleDialog) {
+        GoogleSignInOptionsDialog(
+            onDismiss = { showGoogleDialog = false },
+            onLaunchPlayServices = {
+                showGoogleDialog = false
+                signInLauncher.launch(viewModel.getGoogleSignInIntent())
+            },
+            onQuickSignIn = { email, displayName ->
+                showGoogleDialog = false
+                viewModel.quickGoogleSignIn(email, displayName) { loadedName ->
+                    name = loadedName
+                }
+            }
+        )
+    }
 }
 
 // -------------------------------------------------------------
@@ -519,6 +598,10 @@ private fun StepOnePreferences(
     calories: String,
     onCaloriesChange: (String) -> Unit,
     onAutoCalculateCalories: () -> Unit,
+    isGoogleLinked: Boolean = false,
+    googleEmail: String? = null,
+    onSignInGoogle: () -> Unit = {},
+    onQuickConnectGoogle: () -> Unit = {},
     onNext: () -> Unit,
 ) {
     val goals = listOf(
@@ -534,6 +617,43 @@ private fun StepOnePreferences(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        // Google Sign-In & Health Link Card
+        item {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isGoogleLinked) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                ),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        GoogleLogoIcon(Modifier.size(20.dp))
+                        Text(
+                            if (isGoogleLinked) "Connected as $googleEmail" else "Sign in with Google",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Text(
+                        text = if (isGoogleLinked) {
+                            "Your account is connected to Google Health Connect. Your workouts and weight logs will automatically link to Health."
+                        } else {
+                            "Link your workout progress, strength gains, and weight logs to Google Health Connect from day 1."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (!isGoogleLinked) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            GoogleSignInButton(onClick = onSignInGoogle, modifier = Modifier.weight(1f))
+                            OutlinedButton(onClick = onQuickConnectGoogle) { Text("Quick Connect") }
+                        }
+                    }
+                }
+            }
+        }
+
         item {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(

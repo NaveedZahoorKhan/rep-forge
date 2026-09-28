@@ -55,6 +55,12 @@ interface GymDao {
     @Query("SELECT * FROM workout_exercises WHERE workoutId = :workoutId ORDER BY orderIndex")
     suspend fun getWorkoutExercises(workoutId: String): List<WorkoutExerciseEntity>
 
+    @Query("SELECT * FROM workout_exercises ORDER BY orderIndex")
+    fun observeAllWorkoutExercises(): Flow<List<WorkoutExerciseEntity>>
+
+    @Query("SELECT * FROM workout_exercises ORDER BY orderIndex")
+    suspend fun getAllWorkoutExercises(): List<WorkoutExerciseEntity>
+
     @Query("SELECT * FROM set_templates WHERE workoutExerciseId IN (:workoutExerciseIds) ORDER BY workoutExerciseId, orderIndex")
     suspend fun getSetTemplates(workoutExerciseIds: List<String>): List<SetTemplateEntity>
 
@@ -242,11 +248,52 @@ interface GymDao {
     @Query("DELETE FROM reminders")
     suspend fun clearReminders()
 
+    @Upsert
+    suspend fun insertHealthSyncLog(log: com.gymtracker.app.data.local.entity.HealthSyncLogEntity)
+
+    @Query("SELECT * FROM health_sync_logs ORDER BY syncedAt DESC LIMIT 50")
+    fun observeHealthSyncLogs(): Flow<List<com.gymtracker.app.data.local.entity.HealthSyncLogEntity>>
+
+    @Query("SELECT * FROM health_sync_logs ORDER BY syncedAt DESC")
+    suspend fun getHealthSyncLogs(): List<com.gymtracker.app.data.local.entity.HealthSyncLogEntity>
+
+    @Query("DELETE FROM health_sync_logs")
+    suspend fun clearHealthSyncLogs()
+
+    @Query("UPDATE user_profile SET googleLinked = :googleLinked, googleEmail = :googleEmail, googleDisplayName = :googleDisplayName, googlePhotoUrl = :googlePhotoUrl, googleId = :googleId, updatedAt = :now WHERE id = 'me'")
+    suspend fun updateUserGoogleAuth(
+        googleLinked: Boolean,
+        googleEmail: String?,
+        googleDisplayName: String?,
+        googlePhotoUrl: String?,
+        googleId: String?,
+        now: Long = System.currentTimeMillis(),
+    )
+
+    @Query("UPDATE user_profile SET healthConnectLinked = :linked, healthLastSyncedAt = :syncedAt, updatedAt = :syncedAt WHERE id = 'me'")
+    suspend fun updateHealthConnectStatus(
+        linked: Boolean,
+        syncedAt: Long = System.currentTimeMillis(),
+    )
+
+    @Query("UPDATE user_profile SET healthConnectLinked = :linked, healthSyncWorkouts = :syncWorkouts, healthSyncWeights = :syncWeights, healthSyncHydration = :syncHydration, healthSyncSteps = :syncSteps, updatedAt = :now WHERE id = 'me'")
+    suspend fun updateHealthSyncPreferences(
+        linked: Boolean,
+        syncWorkouts: Boolean,
+        syncWeights: Boolean,
+        syncHydration: Boolean,
+        syncSteps: Boolean,
+        now: Long = System.currentTimeMillis(),
+    )
+
     @Query("DELETE FROM weekly_schedule")
     suspend fun clearSchedules()
 
     @Query("DELETE FROM user_profile")
     suspend fun clearUserProfile()
+
+    @Query("DELETE FROM weight_logs WHERE id = :id")
+    suspend fun deleteWeightLog(id: String)
 
     @Query("DELETE FROM weight_logs")
     suspend fun clearWeightLogs()
@@ -289,6 +336,7 @@ interface GymDao {
 
     @Transaction
     suspend fun deleteAllUserData() {
+        clearHealthSyncLogs()
         clearGymEquipments()
         clearGeminiSyncReports()
         clearReminders()

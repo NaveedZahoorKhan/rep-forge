@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -53,6 +54,12 @@ import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.Color
+import com.gymtracker.app.data.local.entity.ExerciseEntity
+import com.gymtracker.app.data.local.entity.WorkoutSessionEntity
+import com.gymtracker.app.domain.model.DynamicWarmUpRoutine
+import com.gymtracker.app.domain.usecase.DynamicWarmUpCatalog
+import com.gymtracker.app.presentation.warmup.DynamicWarmUpPlayerModal
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -97,11 +104,17 @@ import kotlinx.coroutines.launch
 class ActiveWorkoutViewModel @Inject constructor(
     private val repository: GymRepository,
     private val notificationHelper: NotificationHelper,
-    private val soundPlayer: WorkoutSoundPlayer,
+    val soundPlayer: WorkoutSoundPlayer,
 ) : ViewModel() {
     private val sessionId = MutableStateFlow("")
     private var routeKey = ""
     private var timerJob: Job? = null
+
+    val session: StateFlow<WorkoutSessionEntity?> = repository.observeActiveSession()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    val exercises: StateFlow<List<ExerciseEntity>> = repository.observeExercises()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val sets: StateFlow<List<PerformedSetEntity>> = sessionId
         .flatMapLatest { id -> if (id.isBlank()) flowOf(emptyList()) else repository.observeSessionSets(id) }
@@ -305,6 +318,19 @@ fun ActiveWorkoutRouteScreen(
 ) {
     LaunchedEffect(route) { viewModel.enter(route) }
     val sets by viewModel.sets.collectAsStateWithLifecycle()
+    val activeSession by viewModel.session.collectAsStateWithLifecycle()
+    val allExercises by viewModel.exercises.collectAsStateWithLifecycle()
+    var showWarmUpModal by remember { mutableStateOf(false) }
+
+    val warmUpRoutine = remember(activeSession, allExercises) {
+        val sessionName = activeSession?.workoutName.orEmpty()
+        val dummyWorkout = com.gymtracker.app.data.local.entity.WorkoutEntity(
+            id = activeSession?.workoutId.orEmpty(),
+            name = sessionName,
+        )
+        DynamicWarmUpCatalog.suggestRoutineForWorkout(dummyWorkout, allExercises)
+    }
+
     var editingSet by remember { mutableStateOf<PerformedSetEntity?>(null) }
     var plateWeight by remember { mutableDoubleStateOf(100.0) }
     var formula by remember { mutableStateOf(OneRepMaxFormula.EPLEY) }
@@ -350,6 +376,13 @@ fun ActiveWorkoutRouteScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { showWarmUpModal = true }) {
+                        Icon(
+                            Icons.Default.Whatshot,
+                            contentDescription = "Dynamic Warm-Up",
+                            tint = Color(0xFFFF6F00),
+                        )
+                    }
                     Button(
                         onClick = {
                             if (remainingCount > 0) {
@@ -399,6 +432,43 @@ fun ActiveWorkoutRouteScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            // Suggested Dynamic Warm-Up Banner
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = Color(0xFFFF6F00).copy(alpha = 0.12f),
+                border = BorderStroke(1.dp, Color(0xFFFF6F00).copy(alpha = 0.35f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showWarmUpModal = true },
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(Icons.Default.Whatshot, contentDescription = null, tint = Color(0xFFFF6F00), modifier = Modifier.size(20.dp))
+                        Column {
+                            Text(
+                                "🔥 Suggested Warm-Up: ${warmUpRoutine.primaryMuscleGroup.name.lowercase().replaceFirstChar { it.titlecase() }}",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = Color(0xFFFF6F00),
+                            )
+                            Text(
+                                "${warmUpRoutine.movements.size} movements • ~${warmUpRoutine.estimatedDurationMinutes}m • Prime joints & motor units",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 11.sp,
+                            )
+                        }
+                    }
+                    Text("Start >", fontWeight = FontWeight.Bold, color = Color(0xFFFF6F00), fontSize = 12.sp)
+                }
+            }
             // Quick remaining status banner with Complete All action
             if (sets.any { !it.completed }) {
                 Surface(
@@ -641,6 +711,16 @@ fun ActiveWorkoutRouteScreen(
                     Text("Back to Workout")
                 }
             }
+        )
+    }
+
+    if (showWarmUpModal) {
+        DynamicWarmUpPlayerModal(
+            routine = warmUpRoutine,
+            soundPlayer = viewModel.soundPlayer,
+            onDismiss = { showWarmUpModal = false },
+            onStartWorkout = { showWarmUpModal = false },
+            targetWorkoutId = activeSession?.workoutId.orEmpty(),
         )
     }
 }

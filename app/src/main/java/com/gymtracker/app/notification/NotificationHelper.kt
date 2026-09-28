@@ -18,10 +18,13 @@ interface NotificationHelper {
     fun ensureChannels()
     fun showRestComplete(exerciseName: String, sound: Boolean, vibration: Boolean)
     fun showWorkoutReminder(title: String, body: String)
+    fun showWaterReminder(currentMl: Int, goalMl: Int) {}
+    fun showDailyReminder(title: String, body: String) {}
 
     companion object {
         const val REST_CHANNEL = "rest_timers"
         const val REMINDER_CHANNEL = "workout_reminders"
+        const val WATER_CHANNEL = "water_reminders"
     }
 }
 
@@ -37,6 +40,9 @@ class NotificationHelperImpl @Inject constructor(
         )
         manager.createNotificationChannel(
             NotificationChannel(NotificationHelper.REMINDER_CHANNEL, "Workout reminders", NotificationManager.IMPORTANCE_DEFAULT)
+        )
+        manager.createNotificationChannel(
+            NotificationChannel(NotificationHelper.WATER_CHANNEL, "Water intake reminders", NotificationManager.IMPORTANCE_DEFAULT)
         )
     }
 
@@ -54,6 +60,34 @@ class NotificationHelperImpl @Inject constructor(
     override fun showWorkoutReminder(title: String, body: String) {
         show(
             id = 2001,
+            channelId = NotificationHelper.REMINDER_CHANNEL,
+            title = title,
+            body = body,
+            sound = true,
+            vibration = true,
+        )
+    }
+
+    override fun showWaterReminder(currentMl: Int, goalMl: Int) {
+        val remaining = (goalMl - currentMl).coerceAtLeast(0)
+        val body = if (remaining > 0) {
+            "You have logged $currentMl / $goalMl ml today. Drink a glass of water ($remaining ml remaining)!"
+        } else {
+            "Goal achieved! You've logged $currentMl ml of water today. Stay hydrated!"
+        }
+        show(
+            id = 3001,
+            channelId = NotificationHelper.WATER_CHANNEL,
+            title = "💧 Time to Hydrate",
+            body = body,
+            sound = true,
+            vibration = true,
+        )
+    }
+
+    override fun showDailyReminder(title: String, body: String) {
+        show(
+            id = 4001,
             channelId = NotificationHelper.REMINDER_CHANNEL,
             title = title,
             body = body,

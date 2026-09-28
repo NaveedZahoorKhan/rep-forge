@@ -52,8 +52,9 @@ import com.gymtracker.app.data.local.entity.WorkoutSessionEntity
         GymEquipmentEntity::class,
         ManualWorkoutSessionEntity::class,
         ManualWorkoutSetEntity::class,
+        com.gymtracker.app.data.local.entity.HealthSyncLogEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -193,6 +194,38 @@ abstract class GymTrackerDatabase : RoomDatabase() {
                     db.execSQL("CREATE INDEX IF NOT EXISTS `index_manual_workout_sets_exerciseName` ON `manual_workout_sets` (`exerciseName`)")
                     db.execSQL("CREATE INDEX IF NOT EXISTS `index_manual_workout_sets_exerciseId` ON `manual_workout_sets` (`exerciseId`)")
                     db.execSQL("CREATE INDEX IF NOT EXISTS `index_manual_workout_sets_sessionId_exerciseName` ON `manual_workout_sets` (`sessionId`, `exerciseName`)")
+                }
+            }
+
+        val MIGRATION_6_7: Migration =
+            object : Migration(6, 7) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL("ALTER TABLE user_profile ADD COLUMN googleLinked INTEGER NOT NULL DEFAULT 0")
+                    db.execSQL("ALTER TABLE user_profile ADD COLUMN googleEmail TEXT")
+                    db.execSQL("ALTER TABLE user_profile ADD COLUMN googleDisplayName TEXT")
+                    db.execSQL("ALTER TABLE user_profile ADD COLUMN googlePhotoUrl TEXT")
+                    db.execSQL("ALTER TABLE user_profile ADD COLUMN googleId TEXT")
+                    db.execSQL("ALTER TABLE user_profile ADD COLUMN healthConnectLinked INTEGER NOT NULL DEFAULT 0")
+                    db.execSQL("ALTER TABLE user_profile ADD COLUMN healthLastSyncedAt INTEGER")
+                    db.execSQL("ALTER TABLE user_profile ADD COLUMN healthSyncWorkouts INTEGER NOT NULL DEFAULT 1")
+                    db.execSQL("ALTER TABLE user_profile ADD COLUMN healthSyncWeights INTEGER NOT NULL DEFAULT 1")
+                    db.execSQL("ALTER TABLE user_profile ADD COLUMN healthSyncHydration INTEGER NOT NULL DEFAULT 1")
+                    db.execSQL("ALTER TABLE user_profile ADD COLUMN healthSyncSteps INTEGER NOT NULL DEFAULT 1")
+
+                    db.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS `health_sync_logs` (
+                            `id` TEXT NOT NULL PRIMARY KEY,
+                            `syncedAt` INTEGER NOT NULL,
+                            `category` TEXT NOT NULL,
+                            `summary` TEXT NOT NULL,
+                            `itemCount` INTEGER NOT NULL,
+                            `status` TEXT NOT NULL,
+                            `details` TEXT NOT NULL
+                        )
+                        """.trimIndent()
+                    )
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_health_sync_logs_syncedAt` ON `health_sync_logs` (`syncedAt`)")
                 }
             }
     }

@@ -4,16 +4,21 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -25,6 +30,7 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -32,6 +38,12 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.ui.graphics.Color
+import com.gymtracker.app.data.local.entity.MuscleGroup
+import com.gymtracker.app.domain.model.DynamicWarmUpRoutine
+import com.gymtracker.app.domain.usecase.DynamicWarmUpCatalog
+import com.gymtracker.app.notification.WorkoutSoundPlayer
+import com.gymtracker.app.presentation.warmup.DynamicWarmUpPlayerModal
 import com.gymtracker.app.presentation.history.WorkoutHistoryScreen
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
@@ -44,7 +56,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -56,7 +67,6 @@ import androidx.lifecycle.viewModelScope
 import com.gymtracker.app.data.local.entity.Difficulty
 import com.gymtracker.app.data.local.entity.Equipment
 import com.gymtracker.app.data.local.entity.ExerciseEntity
-import com.gymtracker.app.data.local.entity.MuscleGroup
 import com.gymtracker.app.data.local.entity.SetType
 import com.gymtracker.app.data.local.entity.UserProfileEntity
 import com.gymtracker.app.data.local.entity.WeekDay
@@ -91,6 +101,7 @@ data class WorkoutsUiState(
 @HiltViewModel
 class WorkoutsViewModel @Inject constructor(
     private val repository: GymRepository,
+    val soundPlayer: WorkoutSoundPlayer,
 ) : ViewModel() {
     val state: StateFlow<WorkoutsUiState> = combine(
         repository.observeWorkouts(),
@@ -129,6 +140,7 @@ fun WorkoutsScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var tab by remember { mutableIntStateOf(0) }
+    var activeWarmUpRoutine by remember { mutableStateOf<DynamicWarmUpRoutine?>(null) }
     val tabs = listOf("Workouts", "History", "Create", "Library", "Planner")
 
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -152,12 +164,27 @@ fun WorkoutsScreen(
                 4 -> PlannerPanel(
                     schedule = state.schedule,
                     workouts = state.workouts,
+                    exercises = state.exercises,
                     currentSplit = state.profile.preferredSplit,
                     onStartWorkout = onStartWorkout,
                     onApplySplit = { viewModel.applySplit(it) },
+                    onStartWarmUp = { activeWarmUpRoutine = it },
                 )
             }
         }
+    }
+
+    activeWarmUpRoutine?.let { routine ->
+        DynamicWarmUpPlayerModal(
+            routine = routine,
+            soundPlayer = viewModel.soundPlayer,
+            onDismiss = { activeWarmUpRoutine = null },
+            onStartWorkout = { wId ->
+                activeWarmUpRoutine = null
+                onStartWorkout(wId)
+            },
+            targetWorkoutId = state.workouts.firstOrNull { it.name.equals(routine.targetWorkoutName, ignoreCase = true) }?.id.orEmpty(),
+        )
     }
 }
 
@@ -471,9 +498,11 @@ private fun ExerciseLibrary(exercises: List<ExerciseEntity>) {
 private fun PlannerPanel(
     schedule: List<WeeklyScheduleEntity>,
     workouts: List<WorkoutEntity>,
+    exercises: List<ExerciseEntity>,
     currentSplit: String,
     onStartWorkout: (String) -> Unit,
     onApplySplit: (String) -> Unit,
+    onStartWarmUp: (DynamicWarmUpRoutine) -> Unit,
 ) {
     val currentSplitName = currentSplit.ifBlank { "Push Pull Legs (PPL)" }
     val splits = listOf(
@@ -614,18 +643,54 @@ private fun PlannerPanel(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         workout?.let { w ->
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                val routine = remember(w, exercises) {
+                                    DynamicWarmUpCatalog.suggestRoutineForWorkout(w, exercises)
+                                }
+                                OutlinedButton(
+                                    onClick = { onStartWarmUp(routine) },
+                                    shape = RoundedCornerShape(6.dp),
+                                    border = BorderStroke(1.dp, Color(0xFFFF6F00)),
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                ) {
+                                    Icon(Icons.Default.Whatshot, contentDescription = null, tint = Color(0xFFFF6F00), modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Warm-Up (${routine.primaryMuscleGroup.name.lowercase().replaceFirstChar { it.titlecase() }})", color = Color(0xFFFF6F00), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
                                 Button(
                                     onClick = { onStartWorkout(w.id) },
                                     shape = RoundedCornerShape(6.dp),
-                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 4.dp)
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 4.dp),
                                 ) {
                                     Text(if (isToday) "Start Today's Workout" else "Start Workout", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
                     } else {
-                        Text("Active recovery, light mobility, and hydration.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("Active recovery, mobility, and hydration.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            OutlinedButton(
+                                onClick = {
+                                    val restMobility = DynamicWarmUpCatalog.getWarmUpRoutine(MuscleGroup.FULL_BODY, workoutName = "Rest Day Mobility")
+                                    onStartWarmUp(restMobility)
+                                },
+                                shape = RoundedCornerShape(6.dp),
+                                border = BorderStroke(0.8.dp, Color(0xFFFF6F00).copy(alpha = 0.6f)),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            ) {
+                                Icon(Icons.Default.Whatshot, contentDescription = null, tint = Color(0xFFFF6F00), modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Mobility Flow", color = Color(0xFFFF6F00), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
                     }
                 }
             }

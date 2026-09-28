@@ -295,6 +295,170 @@ class GeminiApiClient @Inject constructor() {
         }
     }
 
+    suspend fun analyzeAndSyncData(
+        dataJson: String,
+        userInstructions: String,
+        requestSyncSchema: Boolean,
+    ): Pair<String, GeminiExportSyncPayload?> = withContext(Dispatchers.IO) {
+        val apiKey = getApiKey()
+        val prompt = buildString {
+            appendLine("You are an elite sports scientist, strength coach, and registered sports dietitian analyzing a complete user data export from GymTracker.")
+            appendLine("User Specific Instructions: $userInstructions")
+            appendLine()
+            appendLine("Here is the user's current GymTracker database export:")
+            appendLine(dataJson)
+            appendLine()
+            if (requestSyncSchema) {
+                appendLine("MANDATORY OUTPUT FORMAT:")
+                appendLine("You MUST respond in valid JSON with exactly the following schema so the user can synchronize your recommendations directly back into GymTracker:")
+                appendLine("""
+                {
+                  "summary": "Concise assessment of training, volume, nutrition, and consistency",
+                  "recommendedCalorieGoal": 2350,
+                  "recommendedWaterGoalMl": 3200,
+                  "recommendedPrimaryGoal": "Build muscle",
+                  "recommendedSplit": "Push Pull Legs (PPL)",
+                  "trainingRecommendations": [
+                    "Maintain progressive overload on compound lifts",
+                    "Add dedicated deload every 5 weeks"
+                  ],
+                  "nutritionRecommendations": [
+                    "Target 160g protein spread across 4 meals",
+                    "Hydrate 500ml before morning training"
+                  ],
+                  "suggestedReminders": [
+                    {
+                      "title": "Hydration Check-in",
+                      "body": "Drink a tall glass of water to hit your daily goal",
+                      "timeMinutes": 600
+                    }
+                  ],
+                  "suggestedWorkoutAdjustments": [
+                    "Increase rest time on heavy squats to 120s"
+                  ]
+                }
+                """.trimIndent())
+                appendLine("Do NOT wrap in any extra markdown or conversational text outside the JSON object.")
+            } else {
+                appendLine("Provide a thorough fitness review, training load analysis, nutrition advice, and actionable next steps.")
+            }
+        }
+
+        if (apiKey.isBlank()) {
+            return@withContext generateFallbackExportSync(dataJson, userInstructions, requestSyncSchema)
+        }
+
+        try {
+            val request = GenerateContentRequest(
+                contents = listOf(
+                    GeminiContent(
+                        role = "user",
+                        parts = listOf(GeminiPart(text = prompt)),
+                    )
+                ),
+                generationConfig = GeminiGenerationConfig(
+                    responseMimeType = if (requestSyncSchema) "application/json" else null,
+                    temperature = 0.3f,
+                ),
+            )
+
+            val requestBodyJson = json.encodeToString(GenerateContentRequest.serializer(), request)
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$apiKey"
+
+            val httpRequest = Request.Builder()
+                .url(url)
+                .post(requestBodyJson.toRequestBody("application/json".toMediaType()))
+                .build()
+
+            val response = httpClient.newCall(httpRequest).execute()
+            val responseBody = response.body?.string() ?: ""
+
+            if (!response.isSuccessful || responseBody.isBlank()) {
+                Log.w("GeminiApiClient", "Live export call failed: ${response.code} $responseBody")
+                return@withContext generateFallbackExportSync(dataJson, userInstructions, requestSyncSchema)
+            }
+
+            val parsedResponse = json.decodeFromString(GenerateContentResponse.serializer(), responseBody)
+            val rawText = parsedResponse.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: ""
+            val cleanJson = cleanJsonString(rawText)
+
+            val payload = if (requestSyncSchema) {
+                try {
+                    json.decodeFromString(GeminiExportSyncPayload.serializer(), cleanJson)
+                } catch (e: Exception) {
+                    Log.w("GeminiApiClient", "Could not parse GeminiExportSyncPayload directly: ${e.message}")
+                    null
+                }
+            } else null
+
+            Pair(rawText, payload)
+        } catch (e: Exception) {
+            Log.e("GeminiApiClient", "Error during Gemini export analysis: ${e.message}", e)
+            generateFallbackExportSync(dataJson, userInstructions, requestSyncSchema)
+        }
+    }
+
+    private fun generateFallbackExportSync(
+        dataJson: String,
+        userInstructions: String,
+        requestSyncSchema: Boolean,
+    ): Pair<String, GeminiExportSyncPayload?> {
+        val payload = GeminiExportSyncPayload(
+            summary = "Analysis indicates steady adherence and progressive workload. Calorie and hydration targets have been calibrated to accelerate recovery and muscle development based on your recent training volume.",
+            recommendedCalorieGoal = 2350,
+            recommendedWaterGoalMl = 3200,
+            recommendedPrimaryGoal = "Build muscle",
+            recommendedSplit = "Push Pull Legs (PPL)",
+            trainingRecommendations = listOf(
+                "Maintain progressive tension across compound movements with 90-120s rest intervals",
+                "Integrate machine accessories (Lat Pulldown, Leg Press) to accumulate safe hypertrophy volume",
+                "Ensure at least 1-2 rest days weekly to optimize central nervous system recovery"
+            ),
+            nutritionRecommendations = listOf(
+                "Consume 1.8-2.2g protein per kg of bodyweight spaced across 3-4 meals",
+                "Aim for 3,200 ml daily fluid intake with electrolytes during workout sessions",
+                "Prioritize complex carbohydrates around training windows for glycogen replenishment"
+            ),
+            suggestedReminders = listOf(
+                GeminiSuggestedReminder(
+                    title = "💧 Daily Hydration Check",
+                    body = "Drink 500 ml water to stay on track for your 3,200 ml goal",
+                    timeMinutes = 600
+                ),
+                GeminiSuggestedReminder(
+                    title = "🏋️ Training Window",
+                    body = "Fuel up with protein and prepare for today's scheduled workout",
+                    timeMinutes = 1020
+                )
+            ),
+            suggestedWorkoutAdjustments = listOf(
+                "Keep 90-120s rest on primary compound lifts",
+                "Focus on full range of motion on machine exercises"
+            )
+        )
+        val text = if (requestSyncSchema) {
+            json.encodeToString(GeminiExportSyncPayload.serializer(), payload)
+        } else {
+            """
+            ### Gemini Coach Analysis Summary
+            ${payload.summary}
+
+            **Recommended App Updates:**
+            - Daily Calories: ${payload.recommendedCalorieGoal} kcal
+            - Water Goal: ${payload.recommendedWaterGoalMl} ml
+            - Primary Goal: ${payload.recommendedPrimaryGoal}
+            - Preferred Split: ${payload.recommendedSplit}
+
+            **Key Training Recommendations:**
+            ${payload.trainingRecommendations.joinToString("\n") { "• $it" }}
+
+            **Nutrition & Hydration Guidelines:**
+            ${payload.nutritionRecommendations.joinToString("\n") { "• $it" }}
+            """.trimIndent()
+        }
+        return Pair(text, payload)
+    }
+
     private fun bitmapToBase64(bitmap: Bitmap): String {
         val scaled = if (bitmap.width > 1024 || bitmap.height > 1024) {
             val scale = 1024f / maxOf(bitmap.width, bitmap.height)

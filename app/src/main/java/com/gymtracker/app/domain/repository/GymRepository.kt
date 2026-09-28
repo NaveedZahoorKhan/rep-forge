@@ -30,6 +30,8 @@ interface GymRepository {
     fun observeWorkouts(): Flow<List<WorkoutEntity>>
     fun observeTemplates(): Flow<List<WorkoutEntity>>
     fun observeWorkoutExercises(workoutId: String): Flow<List<WorkoutExerciseEntity>>
+    fun observeAllWorkoutExercises(): Flow<List<WorkoutExerciseEntity>>
+    suspend fun getAllWorkoutExercises(): List<WorkoutExerciseEntity>
     fun observeActiveSession(): Flow<WorkoutSessionEntity?>
     fun observeSessionSets(sessionId: String): Flow<List<PerformedSetEntity>>
     fun observeHistory(): Flow<List<WorkoutSessionEntity>>
@@ -84,6 +86,7 @@ interface GymRepository {
     suspend fun addMeal(meal: MealEntity)
     suspend fun upsertWater(water: WaterLogEntity)
     suspend fun addWeightLog(weight: WeightLogEntity)
+    suspend fun deleteWeightLog(id: String)
     suspend fun upsertSchedule(schedule: WeeklyScheduleEntity)
     suspend fun upsertReminder(reminder: ReminderEntity)
     suspend fun deleteReminder(id: String)
@@ -95,4 +98,30 @@ interface GymRepository {
     suspend fun cloudBackup(): Result<Unit>
     suspend fun cloudRestore(): Result<Unit>
     suspend fun deleteAllData()
+
+    // Google Auth & Health Sync
+    fun observeHealthSyncLogs(): Flow<List<com.gymtracker.app.data.local.entity.HealthSyncLogEntity>>
+    suspend fun getHealthSyncLogs(): List<com.gymtracker.app.data.local.entity.HealthSyncLogEntity>
+    suspend fun updateUserGoogleAuth(
+        googleLinked: Boolean,
+        googleEmail: String?,
+        googleDisplayName: String?,
+        googlePhotoUrl: String?,
+        googleId: String?,
+    )
+    suspend fun updateHealthConnectStatus(linked: Boolean)
+    suspend fun updateHealthSyncPreferences(
+        linked: Boolean,
+        syncWorkouts: Boolean,
+        syncWeights: Boolean,
+        syncHydration: Boolean,
+        syncSteps: Boolean,
+    )
+    suspend fun syncProgressToGoogleHealth(
+        syncWorkouts: Boolean = true,
+        syncWeights: Boolean = true,
+        syncHydration: Boolean = true,
+        onProgressUpdate: (suspend (step: String, progress: Float) -> Unit)? = null,
+    ): Result<com.gymtracker.app.data.health.HealthSyncSummary>
+    suspend fun recordHealthSyncLog(log: com.gymtracker.app.data.local.entity.HealthSyncLogEntity)
 }

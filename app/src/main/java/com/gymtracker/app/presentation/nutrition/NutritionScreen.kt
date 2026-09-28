@@ -3,8 +3,11 @@ package com.gymtracker.app.presentation.nutrition
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
@@ -41,7 +44,15 @@ import com.gymtracker.app.data.local.entity.WeightLogEntity
 import com.gymtracker.app.domain.repository.GymRepository
 import com.gymtracker.app.domain.usecase.BodyFatCalculator
 import com.gymtracker.app.domain.usecase.NutritionCalculator
-import com.gymtracker.app.presentation.components.MultiLineChartCard
+import com.gymtracker.app.presentation.components.WeightLogChartCard
+import androidx.compose.material.icons.filled.WaterDrop
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedButton
+import com.gymtracker.app.notification.NotificationHelper
 import com.gymtracker.app.presentation.components.SectionTitle
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
@@ -63,6 +74,7 @@ data class NutritionUiState(
 @HiltViewModel
 class NutritionViewModel @Inject constructor(
     private val repository: GymRepository,
+    private val notificationHelper: NotificationHelper,
 ) : ViewModel() {
     private val today = LocalDate.now().toEpochDay()
     val state: StateFlow<NutritionUiState> = combine(
@@ -98,8 +110,16 @@ class NutritionViewModel @Inject constructor(
         }
     }
 
+    fun triggerWaterReminder(currentMl: Int, goalMl: Int) {
+        notificationHelper.showWaterReminder(currentMl, goalMl)
+    }
+
     fun addWeight(weightKg: Double) {
         viewModelScope.launch { repository.addWeightLog(WeightLogEntity(weightKg = weightKg)) }
+    }
+
+    fun deleteWeightLog(id: String) {
+        viewModelScope.launch { repository.deleteWeightLog(id) }
     }
 }
 
@@ -138,20 +158,36 @@ fun NutritionContent(
             }
         }
         item {
-            SectionTitle("Water")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(onClick = { viewModel.addWater(250, profile.waterGoalMl) }, modifier = Modifier.weight(1f)) { Text("+250 ml") }
-                Button(onClick = { viewModel.addWater(500, profile.waterGoalMl) }, modifier = Modifier.weight(1f)) { Text("+500 ml") }
-                Button(onClick = { viewModel.addWater(-250, profile.waterGoalMl) }, modifier = Modifier.weight(1f)) { Text("-250 ml") }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SectionTitle("Water & Hydration")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(onClick = { viewModel.addWater(250, profile.waterGoalMl) }, modifier = Modifier.weight(1f)) { Text("+250 ml") }
+                    Button(onClick = { viewModel.addWater(500, profile.waterGoalMl) }, modifier = Modifier.weight(1f)) { Text("+500 ml") }
+                    Button(onClick = { viewModel.addWater(-250, profile.waterGoalMl) }, modifier = Modifier.weight(1f)) { Text("-250 ml") }
+                }
+                OutlinedButton(
+                    onClick = {
+                        val currentWaterMl = state.water?.milliliters ?: 0
+                        viewModel.triggerWaterReminder(currentWaterMl, profile.waterGoalMl)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                ) {
+                    Icon(Icons.Default.NotificationsActive, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Trigger Water Reminder Notification")
+                }
             }
         }
         item { BmrTdeePanel(profile) }
         item { BodyFatPanel(profile.gender, profile.heightCm) }
         item {
-            SectionTitle("Weight log")
-            WeightForm(onAdd = viewModel::addWeight)
-            val chronological = state.weights.sortedBy { it.loggedAt }
-            MultiLineChartCard(listOf(chronological.map { it.weightKg }, chronological.mapNotNull { it.movingAverageKg }))
+            WeightLogChartCard(
+                weights = state.weights,
+                unitSystem = profile.unitSystem,
+                onAddWeight = viewModel::addWeight,
+                onDeleteWeight = viewModel::deleteWeightLog,
+            )
         }
     }
 }

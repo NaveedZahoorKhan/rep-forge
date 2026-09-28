@@ -25,14 +25,21 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.MonitorWeight
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SelfImprovement
+import androidx.compose.material.icons.filled.WaterDrop
+import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
@@ -56,14 +63,28 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import com.gymtracker.app.data.local.entity.ExerciseEntity
+import com.gymtracker.app.data.local.entity.MuscleGroup
+import com.gymtracker.app.data.local.entity.ReminderEntity
 import com.gymtracker.app.data.local.entity.UserProfileEntity
+import com.gymtracker.app.data.local.entity.WaterLogEntity
 import com.gymtracker.app.data.local.entity.WeekDay
 import com.gymtracker.app.data.local.entity.WeeklyScheduleEntity
+import com.gymtracker.app.data.local.entity.WeightLogEntity
 import com.gymtracker.app.data.local.entity.WorkoutEntity
+import com.gymtracker.app.data.local.entity.WorkoutExerciseEntity
 import com.gymtracker.app.data.local.entity.WorkoutSessionEntity
+import com.gymtracker.app.data.local.entity.label
 import com.gymtracker.app.domain.model.DashboardStats
+import com.gymtracker.app.domain.model.DynamicWarmUpRoutine
 import com.gymtracker.app.domain.repository.GymRepository
+import com.gymtracker.app.domain.usecase.DynamicWarmUpCatalog
 import com.gymtracker.app.domain.usecase.WorkoutTemplateCatalog
+import com.gymtracker.app.notification.WorkoutSoundPlayer
+import com.gymtracker.app.presentation.components.DynamicWarmUpCard
+import com.gymtracker.app.presentation.warmup.DynamicWarmUpPlayerModal
+import com.gymtracker.app.presentation.components.WeightLogChartCard
+import com.gymtracker.app.presentation.components.GoogleLogoIcon
 import com.gymtracker.app.presentation.components.EmptyState
 import com.gymtracker.app.presentation.components.MetricCard
 import com.gymtracker.app.presentation.components.SectionTitle
@@ -97,11 +118,18 @@ data class DashboardUiState(
     val splitWorkouts: List<WorkoutEntity> = emptyList(),
     val otherWorkouts: List<WorkoutEntity> = emptyList(),
     val history: List<WorkoutSessionEntity> = emptyList(),
+    val weights: List<WeightLogEntity> = emptyList(),
+    val todayWater: WaterLogEntity? = null,
+    val reminders: List<ReminderEntity> = emptyList(),
+    val todayWarmUpRoutine: DynamicWarmUpRoutine? = null,
+    val exercises: List<ExerciseEntity> = emptyList(),
+    val workoutExercises: List<WorkoutExerciseEntity> = emptyList(),
 )
 
 @HiltViewModel
 class DashboardViewModel @Inject constructor(
     private val repository: GymRepository,
+    val soundPlayer: WorkoutSoundPlayer,
 ) : ViewModel() {
 
     private fun currentWeekDay(): WeekDay = when (LocalDate.now().dayOfWeek) {
@@ -120,7 +148,30 @@ class DashboardViewModel @Inject constructor(
         repository.observeWorkouts(),
         repository.observeWeeklySchedule(),
         repository.observeHistory(),
-    ) { profileEntity, active, allWorkouts, schedule, history ->
+        repository.observeWeightLogs(),
+        repository.observeWater(LocalDate.now().toEpochDay()),
+        repository.observeReminders(),
+        repository.observeExercises(),
+        repository.observeAllWorkoutExercises(),
+    ) { array ->
+        val profileEntity = array[0] as? UserProfileEntity
+        val active = array[1] as? WorkoutSessionEntity
+        @Suppress("UNCHECKED_CAST")
+        val allWorkouts = array[2] as? List<WorkoutEntity> ?: emptyList()
+        @Suppress("UNCHECKED_CAST")
+        val schedule = array[3] as? List<WeeklyScheduleEntity> ?: emptyList()
+        @Suppress("UNCHECKED_CAST")
+        val history = array[4] as? List<WorkoutSessionEntity> ?: emptyList()
+        @Suppress("UNCHECKED_CAST")
+        val weights = array[5] as? List<WeightLogEntity> ?: emptyList()
+        val water = array[6] as? WaterLogEntity
+        @Suppress("UNCHECKED_CAST")
+        val reminders = array[7] as? List<ReminderEntity> ?: emptyList()
+        @Suppress("UNCHECKED_CAST")
+        val exercises = array[8] as? List<ExerciseEntity> ?: emptyList()
+        @Suppress("UNCHECKED_CAST")
+        val workoutExercises = array[9] as? List<WorkoutExerciseEntity> ?: emptyList()
+
         val profile = profileEntity ?: UserProfileEntity()
         val preferredSplit = profile.preferredSplit.ifBlank { "Push Pull Legs (PPL)" }
         val todayWeekDay = currentWeekDay()
@@ -177,6 +228,13 @@ class DashboardViewModel @Inject constructor(
             }
         }
 
+        val warmUpTargetWorkout = todayWorkout ?: nextScheduled
+        val todayWarmUpRoutine = DynamicWarmUpCatalog.suggestRoutineForWorkout(
+            workout = warmUpTargetWorkout,
+            exercises = exercises,
+            workoutExercises = workoutExercises,
+        )
+
         DashboardUiState(
             profile = profile,
             activeSession = active,
@@ -189,8 +247,31 @@ class DashboardViewModel @Inject constructor(
             splitWorkouts = splitWorkouts,
             otherWorkouts = otherWorkouts,
             history = history.take(5),
+            weights = weights,
+            todayWater = water,
+            reminders = reminders,
+            todayWarmUpRoutine = todayWarmUpRoutine,
+            exercises = exercises,
+            workoutExercises = workoutExercises,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DashboardUiState())
+
+    fun addWater(deltaMl: Int) {
+        viewModelScope.launch {
+            val todayEpochDay = LocalDate.now().toEpochDay()
+            val current = state.value.todayWater ?: WaterLogEntity(dateEpochDay = todayEpochDay, goalMl = state.value.profile.waterGoalMl)
+            val updated = current.copy(milliliters = (current.milliliters + deltaMl).coerceAtLeast(0))
+            repository.upsertWater(updated)
+        }
+    }
+
+    fun addWeight(weightKg: Double) {
+        viewModelScope.launch { repository.addWeightLog(WeightLogEntity(weightKg = weightKg)) }
+    }
+
+    fun deleteWeight(id: String) {
+        viewModelScope.launch { repository.deleteWeightLog(id) }
+    }
 
     var stats by mutableStateOf(DashboardStats())
         private set
@@ -225,6 +306,7 @@ fun DashboardScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var showAllTemplates by remember { mutableStateOf(false) }
+    var activeWarmUpRoutine by remember { mutableStateOf<DynamicWarmUpRoutine?>(null) }
     LaunchedEffect(state.history, state.activeSession) { viewModel.refreshStats() }
 
     val todayFormattedName = state.todayWeekDay.name.lowercase().replaceFirstChar { it.titlecase() }
@@ -261,6 +343,26 @@ fun DashboardScreen(
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                         )
                     }
+                    if (state.profile.googleLinked && !state.profile.googleEmail.isNullOrBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = Color(0xFFE8F5E9),
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            ) {
+                                GoogleLogoIcon(Modifier.size(12.dp))
+                                Text(
+                                    if (state.profile.healthConnectLinked) "Health Linked" else "Google Connected",
+                                    color = Color(0xFF2E7D32),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -272,6 +374,18 @@ fun DashboardScreen(
                 MetricCard("Volume", "${viewModel.stats.weeklyVolume.toInt()} kg", Modifier.weight(1f), MaterialTheme.colorScheme.secondary)
                 MetricCard("Streak", "${viewModel.stats.streakDays} d", Modifier.weight(1f), MaterialTheme.colorScheme.tertiary)
             }
+        }
+
+        // -------------------------------------------------------------
+        // IN-APP NOTIFICATION FOR DAILY REMINDERS
+        // -------------------------------------------------------------
+        item {
+            InAppDailyRemindersCard(
+                state = state,
+                onStartWorkout = onStartWorkout,
+                onAddWater = viewModel::addWater,
+                onLogWeight = { viewModel.addWeight(state.profile.weightKg) }
+            )
         }
 
         // -------------------------------------------------------------
@@ -363,6 +477,21 @@ fun DashboardScreen(
                                 Spacer(Modifier.width(6.dp))
                                 Text("⚡ Start Today's Workout (${todayWorkout.name})", fontWeight = FontWeight.Bold)
                             }
+                            state.todayWarmUpRoutine?.let { routine ->
+                                OutlinedButton(
+                                    onClick = { activeWarmUpRoutine = routine },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = Color(0xFFFF6F00),
+                                    ),
+                                    border = BorderStroke(1.dp, Color(0xFFFF6F00)),
+                                ) {
+                                    Icon(Icons.Default.Whatshot, contentDescription = null, tint = Color(0xFFFF6F00))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("🔥 Warm-Up First (${routine.primaryMuscleGroup.label()} • ~${routine.estimatedDurationMinutes}m)", fontWeight = FontWeight.Bold)
+                                }
+                            }
                         }
                     }
                 }
@@ -423,6 +552,19 @@ fun DashboardScreen(
                         }
                     }
                 }
+            }
+        }
+
+        // Dynamic Warm-Up Recommendation Card based on Scheduled Workout's Muscle Group
+        state.todayWarmUpRoutine?.let { warmUpRoutine ->
+            item {
+                DynamicWarmUpCard(
+                    suggestedRoutine = warmUpRoutine,
+                    scheduledWorkoutName = state.todayWorkout?.name ?: state.nextScheduledWorkout?.name.orEmpty(),
+                    onStartWarmUp = { routineToRun ->
+                        activeWarmUpRoutine = routineToRun
+                    },
+                )
             }
         }
 
@@ -726,6 +868,18 @@ fun DashboardScreen(
         }
 
         // -------------------------------------------------------------
+        // BODYWEIGHT TRACKING CHART
+        // -------------------------------------------------------------
+        item {
+            WeightLogChartCard(
+                weights = state.weights,
+                unitSystem = state.profile.unitSystem,
+                onAddWeight = { viewModel.addWeight(state.profile.weightKg) },
+                onDeleteWeight = null,
+            )
+        }
+
+        // -------------------------------------------------------------
         // RECENT WORKOUT HISTORY
         // -------------------------------------------------------------
         item {
@@ -788,6 +942,259 @@ fun DashboardScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+                }
+            }
+        }
+    }
+
+    activeWarmUpRoutine?.let { routine ->
+        DynamicWarmUpPlayerModal(
+            routine = routine,
+            soundPlayer = viewModel.soundPlayer,
+            onDismiss = { activeWarmUpRoutine = null },
+            onStartWorkout = { wId ->
+                activeWarmUpRoutine = null
+                onStartWorkout(wId)
+            },
+            targetWorkoutId = state.todayWorkout?.id ?: state.nextScheduledWorkout?.id.orEmpty(),
+        )
+    }
+}
+
+@Composable
+fun InAppDailyRemindersCard(
+    state: DashboardUiState,
+    onStartWorkout: (String) -> Unit,
+    onAddWater: (Int) -> Unit,
+    onLogWeight: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var isDismissed by remember { mutableStateOf(false) }
+    if (isDismissed) return
+
+    val currentWater = state.todayWater?.milliliters ?: 0
+    val waterGoal = state.profile.waterGoalMl.coerceAtLeast(1000)
+    val waterProgress = (currentWater.toFloat() / waterGoal.toFloat()).coerceIn(0f, 1f)
+    val hasWorkoutToday = state.todayWorkout != null
+    val isWorkoutActive = state.activeSession != null
+
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.size(30.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Default.NotificationsActive,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                    Column {
+                        Text(
+                            "Daily Reminders & Check-in",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            "Keep your daily streak and hydration on track",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                IconButton(
+                    onClick = { isDismissed = true },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Dismiss reminders",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+
+            // Water Reminder section
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(
+                                Icons.Default.WaterDrop,
+                                contentDescription = null,
+                                tint = Color(0xFF29B6F6),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text("Water Reminder", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        }
+                        Text(
+                            "$currentWater / $waterGoal ml",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (currentWater >= waterGoal) Color(0xFF2E7D32) else MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    LinearProgressIndicator(
+                        progress = { waterProgress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(3.dp)),
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { onAddWater(250) },
+                            modifier = Modifier.weight(1f).height(32.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text("+250 ml", fontSize = 11.sp)
+                        }
+                        OutlinedButton(
+                            onClick = { onAddWater(500) },
+                            modifier = Modifier.weight(1f).height(32.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text("+500 ml", fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+
+            // Workout Reminder (if today has a workout and not currently in active session)
+            if (hasWorkoutToday && !isWorkoutActive) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                Icons.Default.FitnessCenter,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Column {
+                                Text(
+                                    state.todayWorkout?.name ?: "Scheduled Workout",
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 13.sp
+                                )
+                                Text(
+                                    "Ready to train today?",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Button(
+                            onClick = { state.todayWorkout?.let { onStartWorkout(it.id) } },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("Start", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
+            // Weight Check-in reminder
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            Icons.Default.MonitorWeight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Column {
+                            Text("Weight Check-in", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            val latestW = state.weights.maxByOrNull { it.loggedAt }
+                            val textDesc = if (latestW != null) "Last: ${latestW.weightKg} kg" else "No weigh-in yet"
+                            Text(textDesc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    OutlinedButton(
+                        onClick = onLogWeight,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Text("Log", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }

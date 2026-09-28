@@ -499,7 +499,7 @@ private fun HealthBackgroundCard(
                     }
 
                     Text("Preferred Session Duration", style = MaterialTheme.typography.labelLarge)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         durationOptions.forEach { d ->
                             FilterChip(
                                 selected = durationMinutes == d,

@@ -93,3 +93,25 @@ data class GeminiProgressSyncResult(
     val motivationalQuote: String = "",
     val workloadSummary: String = "",
 )
+
+// Gemini Data Export & App Synchronization models
+@Serializable
+data class GeminiExportSyncPayload(
+    val summary: String = "",
+    val recommendedCalorieGoal: Int? = null,
+    val recommendedWaterGoalMl: Int? = null,
+    val recommendedPrimaryGoal: String? = null,
+    val recommendedSplit: String? = null,
+    val trainingRecommendations: List<String> = emptyList(),
+    val nutritionRecommendations: List<String> = emptyList(),
+    val suggestedReminders: List<GeminiSuggestedReminder> = emptyList(),
+    val suggestedWorkoutAdjustments: List<String> = emptyList(),
+)
+
+@Serializable
+data class GeminiSuggestedReminder(
+    val title: String,
+    val body: String,
+    val timeMinutes: Int = 540,
+)
+

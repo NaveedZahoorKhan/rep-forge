@@ -63,12 +63,15 @@ class GymRepositoryImpl @Inject constructor(
     private val manualWorkoutDao: ManualWorkoutDao,
     private val localBackupService: LocalBackupService,
     private val cloudBackupService: CloudBackupService,
+    private val healthSyncService: com.gymtracker.app.data.health.HealthSyncService,
 ) : GymRepository {
     override fun observeUserProfile(): Flow<UserProfileEntity?> = dao.observeUserProfile()
     override fun observeExercises(): Flow<List<ExerciseEntity>> = dao.observeExercises()
     override fun observeWorkouts(): Flow<List<WorkoutEntity>> = dao.observeWorkouts()
     override fun observeTemplates(): Flow<List<WorkoutEntity>> = dao.observeTemplates()
     override fun observeWorkoutExercises(workoutId: String): Flow<List<WorkoutExerciseEntity>> = dao.observeWorkoutExercises(workoutId)
+    override fun observeAllWorkoutExercises(): Flow<List<WorkoutExerciseEntity>> = dao.observeAllWorkoutExercises()
+    override suspend fun getAllWorkoutExercises(): List<WorkoutExerciseEntity> = dao.getAllWorkoutExercises()
     override fun observeActiveSession(): Flow<WorkoutSessionEntity?> = dao.observeSessionByStatus(SessionStatus.ACTIVE)
     override fun observeSessionSets(sessionId: String): Flow<List<PerformedSetEntity>> = dao.observeSessionSets(sessionId)
     override fun observeHistory(): Flow<List<WorkoutSessionEntity>> = dao.observeHistory()
@@ -676,6 +679,10 @@ class GymRepositoryImpl @Inject constructor(
         dao.upsertWeightLog(weight.copy(movingAverageKg = average))
     }
 
+    override suspend fun deleteWeightLog(id: String) {
+        dao.deleteWeightLog(id)
+    }
+
     override suspend fun upsertSchedule(schedule: WeeklyScheduleEntity) {
         dao.upsertSchedule(schedule)
     }
@@ -711,5 +718,102 @@ class GymRepositoryImpl @Inject constructor(
     override suspend fun deleteAllData() {
         dao.deleteAllUserData()
         seedInitialData()
+    }
+
+    override fun observeHealthSyncLogs(): Flow<List<com.gymtracker.app.data.local.entity.HealthSyncLogEntity>> =
+        dao.observeHealthSyncLogs()
+
+    override suspend fun getHealthSyncLogs(): List<com.gymtracker.app.data.local.entity.HealthSyncLogEntity> =
+        dao.getHealthSyncLogs()
+
+    override suspend fun updateUserGoogleAuth(
+        googleLinked: Boolean,
+        googleEmail: String?,
+        googleDisplayName: String?,
+        googlePhotoUrl: String?,
+        googleId: String?,
+    ) {
+        val currentProfile = dao.getUserProfile()
+        if (currentProfile == null) {
+            dao.upsertUserProfile(
+                UserProfileEntity(
+                    id = "me",
+                    displayName = googleDisplayName?.ifBlank { "Navi" } ?: "Navi",
+                    googleLinked = googleLinked,
+                    googleEmail = googleEmail,
+                    googleDisplayName = googleDisplayName,
+                    googlePhotoUrl = googlePhotoUrl,
+                    googleId = googleId,
+                    healthConnectLinked = googleLinked,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+        } else {
+            val updated = currentProfile.copy(
+                googleLinked = googleLinked,
+                googleEmail = googleEmail,
+                googleDisplayName = googleDisplayName ?: currentProfile.displayName,
+                googlePhotoUrl = googlePhotoUrl ?: currentProfile.googlePhotoUrl,
+                googleId = googleId ?: currentProfile.googleId,
+                healthConnectLinked = if (googleLinked) true else currentProfile.healthConnectLinked,
+                updatedAt = System.currentTimeMillis()
+            )
+            dao.upsertUserProfile(updated)
+        }
+    }
+
+    override suspend fun updateHealthConnectStatus(linked: Boolean) {
+        val currentProfile = dao.getUserProfile()
+        if (currentProfile == null) {
+            dao.upsertUserProfile(
+                UserProfileEntity(
+                    id = "me",
+                    healthConnectLinked = linked,
+                    healthLastSyncedAt = if (linked) System.currentTimeMillis() else null,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+        } else {
+            val updated = currentProfile.copy(
+                healthConnectLinked = linked,
+                healthLastSyncedAt = if (linked) System.currentTimeMillis() else currentProfile.healthLastSyncedAt,
+                updatedAt = System.currentTimeMillis()
+            )
+            dao.upsertUserProfile(updated)
+        }
+    }
+
+    override suspend fun updateHealthSyncPreferences(
+        linked: Boolean,
+        syncWorkouts: Boolean,
+        syncWeights: Boolean,
+        syncHydration: Boolean,
+        syncSteps: Boolean,
+    ) {
+        dao.updateHealthSyncPreferences(
+            linked = linked,
+            syncWorkouts = syncWorkouts,
+            syncWeights = syncWeights,
+            syncHydration = syncHydration,
+            syncSteps = syncSteps,
+        )
+    }
+
+    override suspend fun syncProgressToGoogleHealth(
+        syncWorkouts: Boolean,
+        syncWeights: Boolean,
+        syncHydration: Boolean,
+        onProgressUpdate: (suspend (step: String, progress: Float) -> Unit)?,
+    ): Result<com.gymtracker.app.data.health.HealthSyncSummary> {
+        return healthSyncService.syncProgressToGoogleHealth(
+            syncWorkouts = syncWorkouts,
+            syncWeights = syncWeights,
+            syncHydration = syncHydration,
+            onProgressUpdate = onProgressUpdate,
+        )
+    }
+
+    override suspend fun recordHealthSyncLog(log: com.gymtracker.app.data.local.entity.HealthSyncLogEntity) {
+        dao.insertHealthSyncLog(log)
     }
 }
