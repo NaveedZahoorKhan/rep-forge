@@ -54,7 +54,7 @@ import com.gymtracker.app.data.local.entity.WorkoutSessionEntity
         ManualWorkoutSetEntity::class,
         com.gymtracker.app.data.local.entity.HealthSyncLogEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -226,6 +226,13 @@ abstract class GymTrackerDatabase : RoomDatabase() {
                         """.trimIndent()
                     )
                     db.execSQL("CREATE INDEX IF NOT EXISTS `index_health_sync_logs_syncedAt` ON `health_sync_logs` (`syncedAt`)")
+                }
+            }
+
+        val MIGRATION_7_8: Migration =
+            object : Migration(7, 8) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL("ALTER TABLE gemini_sync_reports ADD COLUMN isLocalFallback INTEGER NOT NULL DEFAULT 0")
                 }
             }
     }

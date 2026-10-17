@@ -299,14 +299,21 @@ class GeminiCoachViewModel @Inject constructor(
                     actionableSuggestionsJson = Json.encodeToString(syncResult.actionableSuggestions),
                     motivationalQuote = syncResult.motivationalQuote,
                     workloadSummary = syncResult.workloadSummary,
+                    isLocalFallback = syncResult.isLocalFallback,
                 )
                 repository.saveGeminiSyncReport(reportEntity)
+
+                val successMsg = if (syncResult.isLocalFallback) {
+                    "Daily progress report calculated locally (offline mode)."
+                } else {
+                    "Daily progress successfully synced to Gemini Coach!"
+                }
 
                 _uiState.update {
                     it.copy(
                         isSyncing = false,
                         latestSyncResult = syncResult,
-                        statusMessage = "Daily progress successfully synced to Gemini Coach!",
+                        statusMessage = successMsg,
                     )
                 }
             } catch (e: Exception) {

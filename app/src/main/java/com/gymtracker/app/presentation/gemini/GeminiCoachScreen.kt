@@ -1168,35 +1168,138 @@ private fun ProgressSyncTab(
             }
         }
 
-        // Display Latest Sync Report (either from live state or first in past reports)
-        val report = state.latestSyncResult
-        if (report != null) {
+        // Error / Failure State Card with Retry Action
+        if (state.errorMessage != null) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth().testTag("sync_error_card"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.Info,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            Text(
+                                "Sync Unsuccessful",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                        }
+                        Text(
+                            state.errorMessage ?: "An unexpected error occurred while syncing.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        OutlinedButton(
+                            onClick = onSyncNow,
+                            modifier = Modifier.align(Alignment.End).testTag("retry_sync_button"),
+                        ) {
+                            Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Retry Sync")
+                        }
+                    }
+                }
+            }
+        }
+
+        // Determine top featured report and past history without duplication
+        val featuredLiveReport = state.latestSyncResult
+        val featuredPastEntity = if (featuredLiveReport == null && state.pastSyncReports.isNotEmpty()) {
+            state.pastSyncReports.first()
+        } else null
+
+        // ID to exclude from history list to prevent double rendering
+        val excludedPastReportId = when {
+            featuredLiveReport != null -> {
+                state.pastSyncReports.firstOrNull { it.syncedAt == featuredLiveReport.syncTimestamp }?.id
+                    ?: state.pastSyncReports.firstOrNull()?.id
+            }
+            featuredPastEntity != null -> featuredPastEntity.id
+            else -> null
+        }
+
+        val pastHistoryList = state.pastSyncReports.filter { it.id != excludedPastReportId }
+
+        // Featured Report Section
+        if (featuredLiveReport != null) {
             item {
                 SectionTitle("Latest Gemini Sync Report")
             }
             item {
-                GeminiSyncReportCard(report = report)
+                GeminiSyncReportCard(report = featuredLiveReport)
             }
-        } else if (state.pastSyncReports.isNotEmpty()) {
-            val latestPast = state.pastSyncReports.first()
+        } else if (featuredPastEntity != null) {
             item {
                 SectionTitle("Recent Gemini Sync Report")
             }
             item {
-                PastReportCard(entity = latestPast, dateFormat = dateFormat)
+                PastReportCard(entity = featuredPastEntity, dateFormat = dateFormat)
+            }
+        }
+
+        // Empty state guidance when no reports exist
+        if (featuredLiveReport == null && state.pastSyncReports.isEmpty() && !state.isSyncing) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth().testTag("sync_empty_state_card"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Info,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(40.dp),
+                        )
+                        Text(
+                            "No Sync Reports Yet",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            "Tap \"Sync Daily Progress to Gemini\" above to generate your first progress report. Gemini will evaluate your workout volume, health background, and nutrition logs to deliver personalized coaching insights.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        )
+                    }
+                }
             }
         }
 
         // Past Sync History Section
-        if (state.pastSyncReports.isNotEmpty()) {
+        if (pastHistoryList.isNotEmpty()) {
             item {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Text("Past Sync History (${state.pastSyncReports.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("Past Sync History (${pastHistoryList.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 }
             }
 
-            items(state.pastSyncReports, key = { it.id }) { pastReport ->
+            items(pastHistoryList, key = { it.id }) { pastReport ->
                 PastReportCard(entity = pastReport, dateFormat = dateFormat)
             }
         }
@@ -1219,21 +1322,45 @@ private fun GeminiSyncReportCard(report: GeminiProgressSyncResult) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Icon(
+                        Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = if (report.isLocalFallback) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
+                    )
                     Text("Synced Successfully", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 }
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.secondaryContainer)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                ) {
-                    Text(
-                        report.consistencyScore,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        fontWeight = FontWeight.Bold,
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    // Source badge
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                if (report.isLocalFallback) MaterialTheme.colorScheme.tertiaryContainer
+                                else MaterialTheme.colorScheme.primaryContainer
+                            )
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    ) {
+                        Text(
+                            text = if (report.isLocalFallback) "Local Calculation" else "Gemini Coach",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (report.isLocalFallback) MaterialTheme.colorScheme.onTertiaryContainer
+                            else MaterialTheme.colorScheme.onPrimaryContainer,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.secondaryContainer)
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    ) {
+                        Text(
+                            report.consistencyScore,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
                 }
             }
 
@@ -1355,11 +1482,30 @@ private fun PastReportCard(
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
-                IconButton(onClick = { isExpanded = !isExpanded }) {
-                    Icon(
-                        if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                        contentDescription = "Toggle report details",
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                if (entity.isLocalFallback) MaterialTheme.colorScheme.tertiaryContainer
+                                else MaterialTheme.colorScheme.primaryContainer
+                            )
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    ) {
+                        Text(
+                            text = if (entity.isLocalFallback) "Local Calculation" else "Gemini Coach",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (entity.isLocalFallback) MaterialTheme.colorScheme.onTertiaryContainer
+                            else MaterialTheme.colorScheme.onPrimaryContainer,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                    IconButton(onClick = { isExpanded = !isExpanded }) {
+                        Icon(
+                            if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                            contentDescription = "Toggle report details",
+                        )
+                    }
                 }
             }
 
