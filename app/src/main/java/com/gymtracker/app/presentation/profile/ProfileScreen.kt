@@ -420,7 +420,6 @@ class ProfileViewModel @Inject constructor(
                 googlePhotoUrl = null,
                 googleId = null,
             )
-            repository.updateHealthConnectStatus(linked = false)
             transient = transient.copy(status = "Signed out of Google Account")
         }
     }

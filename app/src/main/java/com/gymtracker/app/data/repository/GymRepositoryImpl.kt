@@ -815,9 +815,9 @@ class GymRepositoryImpl @Inject constructor(
             val updated = currentProfile.copy(
                 googleLinked = googleLinked,
                 googleEmail = googleEmail,
-                googleDisplayName = googleDisplayName ?: currentProfile.displayName,
-                googlePhotoUrl = googlePhotoUrl ?: currentProfile.googlePhotoUrl,
-                googleId = googleId ?: currentProfile.googleId,
+                googleDisplayName = googleDisplayName,
+                googlePhotoUrl = googlePhotoUrl,
+                googleId = googleId,
                 updatedAt = System.currentTimeMillis()
             )
             dao.upsertUserProfile(updated)

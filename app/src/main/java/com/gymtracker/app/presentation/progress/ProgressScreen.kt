@@ -270,7 +270,6 @@ class ProgressViewModel @Inject constructor(
                 googlePhotoUrl = null,
                 googleId = null,
             )
-            repository.updateHealthConnectStatus(linked = false)
             _syncStepMessage.value = "Google Account unlinked."
         }
     }
