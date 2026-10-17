@@ -94,6 +94,7 @@ data class GeminiProgressSyncResult(
     val actionableSuggestions: List<String> = emptyList(),
     val motivationalQuote: String = "",
     val workloadSummary: String = "",
+    val isLocalFallback: Boolean = false,
 )
 
 // Gemini Data Export & App Synchronization models

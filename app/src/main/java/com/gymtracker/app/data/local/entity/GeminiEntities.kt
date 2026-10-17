@@ -32,4 +32,5 @@ data class GeminiSyncReportEntity(
     val actionableSuggestionsJson: String = "[]",
     val motivationalQuote: String = "",
     val workloadSummary: String = "",
+    val isLocalFallback: Boolean = false,
 )

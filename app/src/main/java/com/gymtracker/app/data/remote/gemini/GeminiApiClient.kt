@@ -282,7 +282,8 @@ open class GeminiApiClient @Inject constructor() {
             val cleanJson = cleanJsonString(rawText)
 
             return@withContext try {
-                json.decodeFromString(GeminiProgressSyncResult.serializer(), cleanJson)
+                val parsed = json.decodeFromString(GeminiProgressSyncResult.serializer(), cleanJson)
+                parsed.copy(isLocalFallback = false)
             } catch (e: Exception) {
                 Log.e("GeminiApiClient", "Failed to parse Gemini progress sync JSON: ${e.message}", e)
                 generateFallbackSyncReport(
@@ -828,6 +829,7 @@ open class GeminiApiClient @Inject constructor() {
             ),
             motivationalQuote = "Consistency over intensity creates sustainable strength. Protect the foundation today to lift stronger tomorrow.",
             workloadSummary = "$sessionsCount sessions | ${totalVolume.coerceAtLeast(1250)} kg volume | ${recentRecords.size} PRs",
+            isLocalFallback = true,
         )
     }
 
