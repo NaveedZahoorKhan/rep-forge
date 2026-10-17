@@ -189,7 +189,7 @@ class NutritionTest {
         override suspend fun updateUserGoogleAuth(googleLinked: Boolean, googleEmail: String?, googleDisplayName: String?, googlePhotoUrl: String?, googleId: String?) {}
         override suspend fun updateHealthConnectStatus(linked: Boolean) {}
         override suspend fun updateHealthSyncPreferences(linked: Boolean, syncWorkouts: Boolean, syncWeights: Boolean, syncHydration: Boolean, syncSteps: Boolean) {}
-        override suspend fun syncProgressToGoogleHealth(syncWorkouts: Boolean, syncWeights: Boolean, syncHydration: Boolean, onProgressUpdate: (suspend (step: String, progress: Float) -> Unit)?) = Result.success(com.gymtracker.app.data.health.HealthSyncSummary(0,0,0,0, "OK"))
+        override suspend fun syncProgressToGoogleHealth(syncWorkouts: Boolean, syncWeights: Boolean, syncHydration: Boolean, onProgressUpdate: (suspend (step: String, progress: Float) -> Unit)?) = Result.success(com.gymtracker.app.data.health.HealthSyncSummary(message = "OK"))
         override suspend fun recordHealthSyncLog(log: com.gymtracker.app.data.local.entity.HealthSyncLogEntity) {}
     }
 
