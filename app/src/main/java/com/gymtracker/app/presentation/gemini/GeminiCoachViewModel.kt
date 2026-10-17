@@ -34,6 +34,13 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
+data class WorkoutBuilderInputs(
+    val userNotes: String = "",
+    val machineUri: Uri? = null,
+    val machineBitmap: Bitmap? = null,
+    val healthProfile: UserHealthProfileEntity = UserHealthProfileEntity(),
+)
+
 data class GeminiCoachUiState(
     val healthProfile: UserHealthProfileEntity = UserHealthProfileEntity(),
     val userProfile: UserProfileEntity? = null,
@@ -51,6 +58,8 @@ data class GeminiCoachUiState(
     val statusMessage: String? = null,
     val errorMessage: String? = null,
     val isLiveApi: Boolean = false,
+    val isResultStale: Boolean = false,
+    val lastGeneratedInputs: WorkoutBuilderInputs? = null,
 )
 
 @HiltViewModel
@@ -103,20 +112,32 @@ class GeminiCoachViewModel @Inject constructor(
         _uiState.update { it.copy(selectedTab = tabIndex) }
     }
 
+    private fun checkStaleness(state: GeminiCoachUiState): GeminiCoachUiState {
+        val last = state.lastGeneratedInputs ?: return state.copy(isResultStale = false)
+        if (state.builderResult == null) return state.copy(isResultStale = false)
+
+        val isStale = state.userNotes != last.userNotes ||
+                state.machineUri != last.machineUri ||
+                state.machineBitmap != last.machineBitmap ||
+                state.healthProfile != last.healthProfile
+
+        return state.copy(isResultStale = isStale)
+    }
+
     fun updateHealthProfile(profile: UserHealthProfileEntity) {
         viewModelScope.launch {
             repository.updateHealthProfile(profile)
-            _uiState.update { it.copy(healthProfile = profile) }
+            _uiState.update { checkStaleness(it.copy(healthProfile = profile)) }
         }
     }
 
     fun updateNotes(notes: String) {
-        _uiState.update { it.copy(userNotes = notes) }
+        _uiState.update { checkStaleness(it.copy(userNotes = notes)) }
     }
 
     fun setMachinePhoto(uri: Uri?) {
         if (uri == null) {
-            _uiState.update { it.copy(machineBitmap = null, machineUri = null) }
+            _uiState.update { checkStaleness(it.copy(machineBitmap = null, machineUri = null)) }
             return
         }
         viewModelScope.launch {
@@ -127,7 +148,7 @@ class GeminiCoachViewModel @Inject constructor(
                     @Suppress("DEPRECATION")
                     MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
                 }
-                _uiState.update { it.copy(machineBitmap = bitmap, machineUri = uri) }
+                _uiState.update { checkStaleness(it.copy(machineBitmap = bitmap, machineUri = uri)) }
             } catch (e: Exception) {
                 _uiState.update { it.copy(errorMessage = "Could not load image: ${e.message}") }
             }
@@ -135,11 +156,11 @@ class GeminiCoachViewModel @Inject constructor(
     }
 
     fun setCapturedBitmap(bitmap: Bitmap?) {
-        _uiState.update { it.copy(machineBitmap = bitmap, machineUri = null) }
+        _uiState.update { checkStaleness(it.copy(machineBitmap = bitmap, machineUri = null)) }
     }
 
     fun removePhoto() {
-        _uiState.update { it.copy(machineBitmap = null, machineUri = null) }
+        _uiState.update { checkStaleness(it.copy(machineBitmap = null, machineUri = null)) }
     }
 
     fun generateCustomWorkout() {
@@ -149,6 +170,7 @@ class GeminiCoachViewModel @Inject constructor(
                 val currentHealth = _uiState.value.healthProfile
                 val currentProfile = _uiState.value.userProfile
                 val bitmap = _uiState.value.machineBitmap
+                val uri = _uiState.value.machineUri
                 val notes = _uiState.value.userNotes
                 val equipmentNames = _uiState.value.equipments.joinToString(", ") { it.name }
                 val effectiveNotes = if (equipmentNames.isNotBlank() && bitmap == null) {
@@ -162,16 +184,37 @@ class GeminiCoachViewModel @Inject constructor(
                     userProfile = currentProfile,
                 )
 
+                val generatedInputs = WorkoutBuilderInputs(
+                    userNotes = notes,
+                    machineUri = uri,
+                    machineBitmap = bitmap,
+                    healthProfile = currentHealth,
+                )
+
+                val isLiveConfigured = geminiApiClient.isLiveApiConfigured()
+                val statusMsg: String?
+                val errorMsg: String?
+
+                if (isLiveConfigured && result.isFallback) {
+                    statusMsg = null
+                    errorMsg = "Live Gemini request failed (${result.fallbackReason ?: "API error"}). Showing local fallback options."
+                } else if (!result.isFallback) {
+                    statusMsg = "Custom workouts generated with Gemini 2.5 Flash!"
+                    errorMsg = null
+                } else {
+                    statusMsg = "Workouts generated with AI Coach! (Add Gemini API key in Secrets panel for live vision model)"
+                    errorMsg = null
+                }
+
                 _uiState.update {
                     it.copy(
                         isBuildingWorkout = false,
                         builderResult = result,
                         selectedOptionIndex = 0,
-                        statusMessage = if (geminiApiClient.isLiveApiConfigured()) {
-                            "Custom workouts generated with Gemini 2.5 Flash!"
-                        } else {
-                            "Workouts generated with AI Coach! (Add Gemini API key in Secrets panel for live vision model)"
-                        }
+                        lastGeneratedInputs = generatedInputs,
+                        isResultStale = false,
+                        statusMessage = statusMsg,
+                        errorMessage = errorMsg,
                     )
                 }
             } catch (e: Exception) {

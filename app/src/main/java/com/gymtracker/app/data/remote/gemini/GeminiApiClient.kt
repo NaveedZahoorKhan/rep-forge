@@ -25,7 +25,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
 @Singleton
-class GeminiApiClient @Inject constructor() {
+open class GeminiApiClient @Inject constructor() {
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -45,9 +45,9 @@ class GeminiApiClient @Inject constructor() {
         return if (key.isBlank() || key == "your_gemini_api_key_here") "" else key
     }
 
-    fun isLiveApiConfigured(): Boolean = getApiKey().isNotBlank()
+    open fun isLiveApiConfigured(): Boolean = getApiKey().isNotBlank()
 
-    suspend fun generateCustomWorkout(
+    open suspend fun generateCustomWorkout(
         machineBitmap: Bitmap?,
         userNotes: String,
         healthProfile: UserHealthProfileEntity,
@@ -55,7 +55,11 @@ class GeminiApiClient @Inject constructor() {
     ): GeminiWorkoutBuilderResult = withContext(Dispatchers.IO) {
         val apiKey = getApiKey()
         if (apiKey.isBlank()) {
-            return@withContext generateFallbackWorkout(machineBitmap, userNotes, healthProfile)
+            return@withContext generateFallbackWorkout(
+                machineBitmap, userNotes, healthProfile,
+                isFallback = true,
+                fallbackReason = "No Gemini API key configured",
+            )
         }
 
         try {
@@ -98,7 +102,11 @@ class GeminiApiClient @Inject constructor() {
 
             if (!response.isSuccessful || responseBody.isBlank()) {
                 Log.w("GeminiApiClient", "Live call failed with code ${response.code}: $responseBody")
-                return@withContext generateFallbackWorkout(machineBitmap, userNotes, healthProfile)
+                return@withContext generateFallbackWorkout(
+                    machineBitmap, userNotes, healthProfile,
+                    isFallback = true,
+                    fallbackReason = "Live API error (HTTP ${response.code})",
+                )
             }
 
             val parsedResponse = json.decodeFromString(GenerateContentResponse.serializer(), responseBody)
@@ -109,11 +117,19 @@ class GeminiApiClient @Inject constructor() {
                 json.decodeFromString(GeminiWorkoutBuilderResult.serializer(), cleanJson)
             } catch (e: Exception) {
                 Log.e("GeminiApiClient", "Failed to parse Gemini workout JSON: ${e.message}", e)
-                generateFallbackWorkout(machineBitmap, userNotes, healthProfile)
+                generateFallbackWorkout(
+                    machineBitmap, userNotes, healthProfile,
+                    isFallback = true,
+                    fallbackReason = "Failed to parse Gemini API response",
+                )
             }
         } catch (e: Exception) {
             Log.e("GeminiApiClient", "Error calling Gemini API: ${e.message}", e)
-            generateFallbackWorkout(machineBitmap, userNotes, healthProfile)
+            generateFallbackWorkout(
+                machineBitmap, userNotes, healthProfile,
+                isFallback = true,
+                fallbackReason = e.message ?: "Network connection failed",
+            )
         }
     }
 
@@ -614,6 +630,8 @@ class GeminiApiClient @Inject constructor() {
         machineBitmap: Bitmap?,
         userNotes: String,
         healthProfile: UserHealthProfileEntity,
+        isFallback: Boolean = true,
+        fallbackReason: String? = null,
     ): GeminiWorkoutBuilderResult {
         val notesLower = userNotes.lowercase()
         val hasLegs = notesLower.contains("leg") || notesLower.contains("squat") || notesLower.contains("press")
@@ -770,6 +788,8 @@ class GeminiApiClient @Inject constructor() {
             machineDescription = machineDesc,
             healthSafetyCues = safetyCues,
             options = listOf(option1, option2),
+            isFallback = isFallback,
+            fallbackReason = fallbackReason,
         )
     }
 

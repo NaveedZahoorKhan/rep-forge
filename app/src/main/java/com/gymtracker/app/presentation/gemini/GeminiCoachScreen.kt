@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalLayoutApi::class)
+
 package com.gymtracker.app.presentation.gemini
 
 import android.graphics.Bitmap
@@ -359,9 +361,46 @@ private fun WorkoutBuilderTab(
                 SectionTitle("Gemini Analysis & Options")
             }
 
-            // Machine Identification & Safety Cues
+            if (state.isResultStale) {
+                item {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("stale_result_banner"),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.Info,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                            )
+                            Text(
+                                "Inputs changed since workout generation. Regenerate to save or start options for current inputs.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Machine Identification, Badging & Safety Cues
             item {
-                IdentifiedMachineCard(result = result, bitmap = state.machineBitmap)
+                IdentifiedMachineCard(
+                    result = result,
+                    bitmap = state.machineBitmap,
+                    isLiveApiConfigured = state.isLiveApi,
+                    onRetryLive = onGenerate,
+                )
             }
 
             // Options Tabs / Selector
@@ -374,15 +413,22 @@ private fun WorkoutBuilderTab(
             }
 
             item {
-                Row(
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     result.options.forEachIndexed { index, option ->
                         FilterChip(
                             selected = state.selectedOptionIndex == index,
                             onClick = { onSelectOption(index) },
-                            label = { Text(option.title) },
+                            label = {
+                                Text(
+                                    option.title,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            },
                             leadingIcon = if (state.selectedOptionIndex == index) {
                                 { Icon(Icons.Default.Check, contentDescription = null, Modifier.size(16.dp)) }
                             } else null,
@@ -400,6 +446,7 @@ private fun WorkoutBuilderTab(
                 item {
                     WorkoutOptionDetailCard(
                         option = option,
+                        isStale = state.isResultStale,
                         onSave = { onSaveOption(option) },
                         onStart = { onStartOption(option) },
                     )
@@ -774,6 +821,8 @@ private fun PersonalNotesCard(
 private fun IdentifiedMachineCard(
     result: com.gymtracker.app.data.remote.gemini.GeminiWorkoutBuilderResult,
     bitmap: Bitmap?,
+    isLiveApiConfigured: Boolean = false,
+    onRetryLive: () -> Unit = {},
 ) {
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
@@ -784,15 +833,42 @@ private fun IdentifiedMachineCard(
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Icon(Icons.Default.FitnessCenter, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Text(
-                    "Detected: ${result.identifiedMachine.ifBlank { "Gym Equipment Station" }}",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f, fill = false),
+                ) {
+                    Icon(Icons.Default.FitnessCenter, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Text(
+                        "Detected: ${result.identifiedMachine.ifBlank { "Gym Equipment Station" }}",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (!result.isFallback) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.secondaryContainer
+                        )
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                ) {
+                    Text(
+                        text = if (!result.isFallback) "✨ Live Gemini" else "⚡ Local Fallback",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (!result.isFallback) MaterialTheme.colorScheme.onPrimaryContainer
+                        else MaterialTheme.colorScheme.onSecondaryContainer,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
             }
 
             if (result.machineDescription.isNotBlank()) {
@@ -801,6 +877,34 @@ private fun IdentifiedMachineCard(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+
+            if (result.isFallback && isLiveApiConfigured) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f))
+                        .padding(10.dp),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "Live Gemini generation failed (${result.fallbackReason ?: "API error"}). Showing offline fallback.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        OutlinedButton(
+                            onClick = onRetryLive,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("retry_live_generation_button"),
+                        ) {
+                            Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Retry Live Gemini Generation")
+                        }
+                    }
+                }
             }
 
             if (result.healthSafetyCues.isNotEmpty()) {
@@ -828,6 +932,7 @@ private fun IdentifiedMachineCard(
 @Composable
 private fun WorkoutOptionDetailCard(
     option: GeminiWorkoutOption,
+    isStale: Boolean = false,
     onSave: () -> Unit,
     onStart: () -> Unit,
 ) {
@@ -882,25 +987,28 @@ private fun WorkoutOptionDetailCard(
 
             HorizontalDivider()
 
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 OutlinedButton(
                     onClick = onSave,
+                    enabled = !isStale,
                     modifier = Modifier.weight(1f).testTag("save_gemini_workout_button"),
                 ) {
                     Icon(Icons.Default.Save, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
-                    Text("Save Workout")
+                    Text("Save Workout", maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Button(
                     onClick = onStart,
+                    enabled = !isStale,
                     modifier = Modifier.weight(1f).testTag("start_gemini_workout_button"),
                 ) {
                     Icon(Icons.Default.PlayArrow, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
-                    Text("Start Now")
+                    Text("Start Now", maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -927,6 +1035,9 @@ private fun ExerciseItemRow(
                     "$index. ${item.exerciseName}",
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f, fill = false),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Box(
                     modifier = Modifier
@@ -943,7 +1054,10 @@ private fun ExerciseItemRow(
                 }
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 Text(
                     "Target: ${item.primaryMuscle}",
                     style = MaterialTheme.typography.bodySmall,
