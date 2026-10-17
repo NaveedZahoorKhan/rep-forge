@@ -42,12 +42,15 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Timeline
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -63,6 +66,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -70,6 +74,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -105,9 +110,12 @@ import com.gymtracker.app.domain.model.WorkoutSessionSummary
 import com.gymtracker.app.presentation.components.EmptyState
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -248,7 +256,7 @@ fun WorkoutHistoryContent(
                 HistoryMetricCard(
                     title = "Workouts",
                     value = "${state.totalWorkoutsCount}",
-                    subtitle = "Logged in Room",
+                    subtitle = "Total logged",
                     icon = Icons.Default.History,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f),
@@ -370,7 +378,7 @@ fun WorkoutHistoryContent(
                 item {
                     EmptyState(
                         title = "No workout sessions found",
-                        detail = if (state.searchQuery.isNotBlank()) "No sessions matching '${state.searchQuery}'" else "Complete a workout or tap '+ Log Workout' to save your first session to Room.",
+                        detail = if (state.searchQuery.isNotBlank()) "No sessions matching '${state.searchQuery}'" else "Complete a workout or tap '+ Log Workout' to save your first session.",
                     )
                 }
             } else {
@@ -1066,36 +1074,85 @@ fun InteractiveVolumeBarChart(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+private data class PastSetDraftUi(
+    val id: String = UUID.randomUUID().toString(),
+    val weightStr: String = "",
+    val repsStr: String = "",
+)
+
+private data class PastExerciseDraftUi(
+    val id: String = UUID.randomUUID().toString(),
+    val exerciseId: String,
+    val exerciseName: String,
+    val sets: List<PastSetDraftUi> = emptyList(),
+)
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun AddPastWorkoutDialog(
     exercises: List<ExerciseEntity>,
     onDismiss: () -> Unit,
     onConfirm: (PastWorkoutLogDraft) -> Unit,
 ) {
-    var workoutName by remember { mutableStateOf("Custom Routine") }
-    var daysAgo by remember { mutableIntStateOf(0) }
-    var durationMinutes by remember { mutableStateOf("45") }
-    var rating by remember { mutableIntStateOf(5) }
+    var workoutName by remember { mutableStateOf("") }
+    var durationMinutesStr by remember { mutableStateOf("") }
+    var rating by remember { mutableStateOf<Int?>(null) }
     var notes by remember { mutableStateOf("") }
 
-    val selectedExercises = remember { mutableStateListOf<PastExerciseDraft>() }
+    val today = remember { LocalDate.now() }
+    var selectedDate by remember { mutableStateOf(today) }
+    var showDatePickerDialog by remember { mutableStateOf(false) }
+
+    val selectedExercises = remember { mutableStateListOf<PastExerciseDraftUi>() }
     var exerciseDropdownExpanded by remember { mutableStateOf(false) }
 
-    // Pre-populate with first exercise if none added
-    if (selectedExercises.isEmpty() && exercises.isNotEmpty()) {
-        val first = exercises.first()
-        selectedExercises.add(
-            PastExerciseDraft(
-                exerciseId = first.id,
-                exerciseName = first.name,
-                sets = listOf(
-                    PastSetDraft(weightKg = 60.0, reps = 10),
-                    PastSetDraft(weightKg = 70.0, reps = 8),
-                    PastSetDraft(weightKg = 75.0, reps = 6),
-                ),
-            )
+    // Validation
+    val durationMinutes = durationMinutesStr.toLongOrNull()
+    val durationValid = durationMinutes != null && durationMinutes in 1L..1440L
+    val hasSessionDetails = workoutName.isNotBlank() || notes.isNotBlank() || selectedExercises.isNotEmpty()
+    val exercisesValid = selectedExercises.all { exUi ->
+        exUi.sets.isNotEmpty() && exUi.sets.all { setUi ->
+            val w = setUi.weightStr.toDoubleOrNull()
+            val r = setUi.repsStr.toIntOrNull()
+            w != null && w.isFinite() && w >= 0.0 && r != null && r > 0
+        }
+    }
+    val isFormValid = durationValid && hasSessionDetails && exercisesValid
+
+    if (showDatePickerDialog) {
+        val initialMillis = remember(selectedDate) {
+            selectedDate.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+        }
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = initialMillis,
+            selectableDates = object : SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean {
+                    val date = Instant.ofEpochMilli(utcTimeMillis).atZone(ZoneOffset.UTC).toLocalDate()
+                    return !date.isAfter(today)
+                }
+            }
         )
+
+        DatePickerDialog(
+            onDismissRequest = { showDatePickerDialog = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { millis ->
+                            selectedDate = Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate()
+                        }
+                        showDatePickerDialog = false
+                    }
+                ) {
+                    Text("OK")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePickerDialog = false }) { Text("Cancel") }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
     }
 
     AlertDialog(
@@ -1106,7 +1163,7 @@ fun AddPastWorkoutDialog(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Text("Log Past Workout to Room", fontWeight = FontWeight.Bold)
+                Text("Log Past Workout", fontWeight = FontWeight.Bold)
             }
         },
         text = {
@@ -1119,24 +1176,50 @@ fun AddPastWorkoutDialog(
                         value = workoutName,
                         onValueChange = { workoutName = it },
                         label = { Text("Workout Name") },
+                        placeholder = { Text("e.g. Chest & Triceps") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                     )
                 }
 
                 item {
-                    Text("Completion Date:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        listOf(0 to "Today", 1 to "Yesterday", 2 to "2d ago", 3 to "3d ago", 5 to "5d ago").forEach { (days, label) ->
-                            FilterChip(
-                                selected = daysAgo == days,
-                                onClick = { daysAgo = days },
-                                label = { Text(label, fontSize = 11.sp) },
-                            )
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Completion Date:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            listOf(
+                                today to "Today",
+                                today.minusDays(1) to "Yesterday",
+                                today.minusDays(2) to "2d ago",
+                                today.minusDays(3) to "3d ago",
+                            ).forEach { (date, label) ->
+                                FilterChip(
+                                    selected = selectedDate == date,
+                                    onClick = { selectedDate = date },
+                                    label = { Text(label, fontSize = 11.sp) },
+                                )
+                            }
+
+                            IconButton(onClick = { showDatePickerDialog = true }) {
+                                Icon(
+                                    Icons.Default.CalendarMonth,
+                                    contentDescription = "Pick past date",
+                                    tint = if (selectedDate !in listOf(today, today.minusDays(1), today.minusDays(2), today.minusDays(3))) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
+                                )
+                            }
                         }
+                        Text(
+                            "Selected: ${selectedDate.format(DateTimeFormatter.ofPattern("EEE, MMM d, yyyy", Locale.getDefault()))}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
                     }
                 }
 
@@ -1146,9 +1229,10 @@ fun AddPastWorkoutDialog(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         OutlinedTextField(
-                            value = durationMinutes,
-                            onValueChange = { durationMinutes = it },
-                            label = { Text("Duration (mins)") },
+                            value = durationMinutesStr,
+                            onValueChange = { durationMinutesStr = it },
+                            label = { Text("Duration (1–1440 min)") },
+                            isError = durationMinutesStr.isNotEmpty() && !durationValid,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.weight(1f),
                             singleLine = true,
@@ -1156,17 +1240,17 @@ fun AddPastWorkoutDialog(
 
                         // Rating selector
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Rating", style = MaterialTheme.typography.labelSmall)
+                            Text("Rating (optional)", style = MaterialTheme.typography.labelSmall)
                             Row {
                                 (1..5).forEach { star ->
                                     IconButton(
-                                        onClick = { rating = star },
+                                        onClick = { rating = if (rating == star) null else star },
                                         modifier = Modifier.size(24.dp),
                                     ) {
                                         Icon(
                                             Icons.Default.Star,
                                             contentDescription = "$star stars",
-                                            tint = if (star <= rating) Color(0xFFFFB300) else Color.Gray.copy(alpha = 0.4f),
+                                            tint = if (rating?.let { star <= it } == true) Color(0xFFFFB300) else Color.Gray.copy(alpha = 0.4f),
                                             modifier = Modifier.size(20.dp),
                                         )
                                     }
@@ -1218,13 +1302,9 @@ fun AddPastWorkoutDialog(
                                         text = { Text(ex.name) },
                                         onClick = {
                                             selectedExercises.add(
-                                                PastExerciseDraft(
+                                                PastExerciseDraftUi(
                                                     exerciseId = ex.id,
                                                     exerciseName = ex.name,
-                                                    sets = listOf(
-                                                        PastSetDraft(weightKg = 50.0, reps = 10),
-                                                        PastSetDraft(weightKg = 55.0, reps = 8),
-                                                    ),
                                                 )
                                             )
                                             exerciseDropdownExpanded = false
@@ -1236,8 +1316,19 @@ fun AddPastWorkoutDialog(
                     }
                 }
 
+                if (selectedExercises.isEmpty()) {
+                    item {
+                        Text(
+                            "Add completed sets, or enter a workout name or notes to log a session without sets.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 8.dp),
+                        )
+                    }
+                }
+
                 // List of added exercises with sets
-                items(selectedExercises.size) { exIndex ->
+                items(selectedExercises.size, key = { selectedExercises[it].id }) { exIndex ->
                     val exerciseDraft = selectedExercises[exIndex]
                     Surface(
                         shape = RoundedCornerShape(8.dp),
@@ -1259,7 +1350,10 @@ fun AddPastWorkoutDialog(
                                 }
                             }
 
-                            exerciseDraft.sets.forEachIndexed { setIdx, set ->
+                            exerciseDraft.sets.forEachIndexed { setIdx, setUi ->
+                                val setWeightValid = setUi.weightStr.toDoubleOrNull()?.let { it.isFinite() && it >= 0.0 } ?: false
+                                val setRepsValid = setUi.repsStr.toIntOrNull()?.let { it > 0 } ?: false
+
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1267,39 +1361,60 @@ fun AddPastWorkoutDialog(
                                 ) {
                                     Text("Set ${setIdx + 1}", fontSize = 12.sp, modifier = Modifier.width(36.dp))
                                     OutlinedTextField(
-                                        value = set.weightKg.toInt().toString(),
+                                        value = setUi.weightStr,
                                         onValueChange = { newVal ->
-                                            val w = newVal.toDoubleOrNull() ?: set.weightKg
                                             val updatedSets = exerciseDraft.sets.toMutableList()
-                                            updatedSets[setIdx] = set.copy(weightKg = w)
+                                            updatedSets[setIdx] = setUi.copy(weightStr = newVal)
                                             selectedExercises[exIndex] = exerciseDraft.copy(sets = updatedSets)
                                         },
                                         label = { Text("Weight (kg)") },
+                                        isError = setUi.weightStr.isNotEmpty() && !setWeightValid,
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         modifier = Modifier.weight(1f),
                                         singleLine = true,
                                     )
                                     OutlinedTextField(
-                                        value = set.reps.toString(),
+                                        value = setUi.repsStr,
                                         onValueChange = { newVal ->
-                                            val r = newVal.toIntOrNull() ?: set.reps
                                             val updatedSets = exerciseDraft.sets.toMutableList()
-                                            updatedSets[setIdx] = set.copy(reps = r)
+                                            updatedSets[setIdx] = setUi.copy(repsStr = newVal)
                                             selectedExercises[exIndex] = exerciseDraft.copy(sets = updatedSets)
                                         },
                                         label = { Text("Reps") },
+                                        isError = setUi.repsStr.isNotEmpty() && !setRepsValid,
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         modifier = Modifier.weight(1f),
                                         singleLine = true,
                                     )
+                                    IconButton(
+                                        onClick = {
+                                            val updatedSets = exerciseDraft.sets.toMutableList()
+                                            updatedSets.removeAt(setIdx)
+                                            selectedExercises[exIndex] = exerciseDraft.copy(sets = updatedSets)
+                                        },
+                                        modifier = Modifier.size(24.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Delete,
+                                            contentDescription = "Delete Set",
+                                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                    }
                                 }
+                            }
+
+                            if (exerciseDraft.sets.isEmpty()) {
+                                Text(
+                                    "Add a completed set to include this exercise.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
 
                             TextButton(
                                 onClick = {
-                                    val last = exerciseDraft.sets.lastOrNull()
-                                    val newSet = PastSetDraft(weightKg = last?.weightKg ?: 50.0, reps = last?.reps ?: 10)
-                                    selectedExercises[exIndex] = exerciseDraft.copy(sets = exerciseDraft.sets + newSet)
+                                    selectedExercises[exIndex] = exerciseDraft.copy(sets = exerciseDraft.sets + PastSetDraftUi())
                                 },
                                 contentPadding = PaddingValues(vertical = 2.dp),
                             ) {
@@ -1314,22 +1429,37 @@ fun AddPastWorkoutDialog(
         },
         confirmButton = {
             Button(
+                enabled = isFormValid,
                 onClick = {
-                    val oneDayMs = 24L * 60 * 60 * 1000
-                    val targetTime = System.currentTimeMillis() - (daysAgo * oneDayMs)
-                    val draft = PastWorkoutLogDraft(
-                        workoutName = workoutName.ifBlank { "Workout Routine" },
-                        dateEpochMilli = targetTime,
-                        durationMinutes = durationMinutes.toLongOrNull() ?: 45L,
-                        rating = rating,
-                        notes = notes,
-                        exercises = selectedExercises.toList(),
-                    )
-                    onConfirm(draft)
+                    if (isFormValid && durationMinutes != null) {
+                        val zone = ZoneId.systemDefault()
+                        val targetTime = selectedDate.atTime(LocalTime.now(zone)).atZone(zone).toInstant().toEpochMilli()
+                        val exerciseDrafts = selectedExercises.map { exUi ->
+                            PastExerciseDraft(
+                                exerciseId = exUi.exerciseId,
+                                exerciseName = exUi.exerciseName,
+                                sets = exUi.sets.map { setUi ->
+                                    PastSetDraft(
+                                        weightKg = requireNotNull(setUi.weightStr.toDoubleOrNull()),
+                                        reps = requireNotNull(setUi.repsStr.toIntOrNull()),
+                                    )
+                                }
+                            )
+                        }
+                        val draft = PastWorkoutLogDraft(
+                            workoutName = workoutName.trim().ifBlank { "Workout Session" },
+                            dateEpochMilli = targetTime,
+                            durationMinutes = durationMinutes,
+                            rating = rating,
+                            notes = notes.trim(),
+                            exercises = exerciseDrafts,
+                        )
+                        onConfirm(draft)
+                    }
                 },
                 modifier = Modifier.testTag("dialog_confirm_log_workout"),
             ) {
-                Text("Save to Room")
+                Text("Save Workout")
             }
         },
         dismissButton = {

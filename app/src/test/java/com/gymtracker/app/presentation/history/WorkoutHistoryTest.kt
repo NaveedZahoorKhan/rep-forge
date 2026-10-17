@@ -167,4 +167,112 @@ class WorkoutHistoryTest {
         assertEquals("Push Day", viewModel.uiState.value.filteredSummaries[0].session.workoutName)
         collectJob.cancel()
     }
+
+    @Test
+    fun `exerciseVolumePoints defaults to first available exercise when none selected`() = runTest(testDispatcher) {
+        val mockExercises = listOf(
+            ExerciseEntity(id = "e1", name = "Barbell Bench Press", primaryMuscle = MuscleGroup.CHEST, equipment = Equipment.BARBELL, difficulty = Difficulty.INTERMEDIATE, instructions = "Press bar"),
+            ExerciseEntity(id = "e2", name = "Incline Dumbbell Press", primaryMuscle = MuscleGroup.CHEST, equipment = Equipment.DUMBBELL, difficulty = Difficulty.INTERMEDIATE, instructions = "Press incline"),
+        )
+
+        val mockPoints = listOf(
+            ExerciseVolumePoint("s1", "Push Day", 100000L, 2000.0, 80.0, 25, 3),
+        )
+
+        var queriedExerciseId: String? = null
+
+        val dummyRepo = Proxy.newProxyInstance(
+            GymRepository::class.java.classLoader,
+            arrayOf(GymRepository::class.java),
+        ) { _, method, args ->
+            when (method.name) {
+                "observeCompletedSessionSummaries" -> flowOf(emptyList<WorkoutSessionSummary>())
+                "observeExercises" -> flowOf(mockExercises)
+                "observeExerciseVolumeOverTime" -> {
+                    queriedExerciseId = args[0] as String
+                    flowOf(mockPoints)
+                }
+                else -> null
+            }
+        } as GymRepository
+
+        val viewModel = WorkoutHistoryViewModel(dummyRepo)
+        val collectJob = launch(testDispatcher) {
+            viewModel.uiState.collect { }
+        }
+        runCurrent()
+
+        assertEquals("e1", queriedExerciseId)
+        assertEquals("e1", viewModel.uiState.value.selectedExerciseId)
+        assertEquals(1, viewModel.uiState.value.exerciseVolumePoints.size)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `logPastWorkout passes draft with empty or customized exercises to repository`() = runTest(testDispatcher) {
+        var loggedDraft: PastWorkoutLogDraft? = null
+
+        val dummyRepo = Proxy.newProxyInstance(
+            GymRepository::class.java.classLoader,
+            arrayOf(GymRepository::class.java),
+        ) { _, method, args ->
+            when (method.name) {
+                "observeCompletedSessionSummaries" -> flowOf(emptyList<WorkoutSessionSummary>())
+                "observeExercises" -> flowOf(emptyList<ExerciseEntity>())
+                "observeExerciseVolumeOverTime" -> flowOf(emptyList<ExerciseVolumePoint>())
+                "logPastWorkout" -> {
+                    loggedDraft = args[0] as PastWorkoutLogDraft
+                    "sess_123"
+                }
+                else -> null
+            }
+        } as GymRepository
+
+        val viewModel = WorkoutHistoryViewModel(dummyRepo)
+        val collectJob = launch(testDispatcher) {
+            viewModel.uiState.collect { }
+        }
+        runCurrent()
+
+        // Test logging empty past workout
+        val emptyDraft = PastWorkoutLogDraft(
+            workoutName = "Empty Past Session",
+            dateEpochMilli = 1700000000000L,
+            durationMinutes = 30L,
+            rating = 4,
+            notes = "Intentionally empty",
+            exercises = emptyList(),
+        )
+        viewModel.logPastWorkout(emptyDraft)
+        runCurrent()
+
+        assertNotNull(loggedDraft)
+        assertEquals("Empty Past Session", loggedDraft?.workoutName)
+        assertTrue(loggedDraft?.exercises?.isEmpty() == true)
+
+        // Test logging custom exercise past workout
+        val customDraft = PastWorkoutLogDraft(
+            workoutName = "Leg Day",
+            dateEpochMilli = 1700000000000L,
+            durationMinutes = 60L,
+            rating = 5,
+            notes = "Good session",
+            exercises = listOf(
+                PastExerciseDraft(
+                    exerciseId = "squat",
+                    exerciseName = "Barbell Squat",
+                    sets = listOf(PastSetDraft(weightKg = 100.0, reps = 5)),
+                )
+            ),
+        )
+        viewModel.logPastWorkout(customDraft)
+        runCurrent()
+
+        assertEquals("Leg Day", loggedDraft?.workoutName)
+        assertEquals(1, loggedDraft?.exercises?.size)
+        assertEquals("Barbell Squat", loggedDraft?.exercises?.get(0)?.exerciseName)
+
+        collectJob.cancel()
+    }
 }
