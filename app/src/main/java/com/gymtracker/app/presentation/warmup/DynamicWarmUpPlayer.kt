@@ -110,17 +110,20 @@ fun DynamicWarmUpPlayerContent(
     onStartWorkout: ((workoutId: String) -> Unit)? = null,
     targetWorkoutId: String = "",
 ) {
-    var currentIndex by remember { mutableIntStateOf(0) }
-    var isCompleted by remember { mutableStateOf(false) }
+    var currentIndex by remember(routine) { mutableIntStateOf(0) }
+    var completedMovementIndices by remember(routine) { mutableStateOf(emptySet<Int>()) }
     val amberFire = Color(0xFFFF6F00)
 
     val currentMovement = routine.movements.getOrNull(currentIndex)
     val totalMovements = routine.movements.size
-    val completedMovements = if (isCompleted) totalMovements else currentIndex
-    val progress = if (totalMovements > 0) completedMovements.toFloat() / totalMovements else 1f
+    val completedMovements = completedMovementIndices.size
+    val isCompleted = totalMovements > 0 && completedMovements == totalMovements
+    val progress = if (totalMovements > 0) completedMovements.toFloat() / totalMovements else 0f
 
     val prevMovement = routine.movements.getOrNull(currentIndex - 1)
-    val nextMovement = routine.movements.getOrNull(currentIndex + 1)
+    val nextIncompleteIndex = ((currentIndex + 1 until totalMovements) + (0 until currentIndex))
+        .firstOrNull { it !in completedMovementIndices }
+    val nextMovement = nextIncompleteIndex?.let(routine.movements::get)
 
     // Timer state for timed movements
     val totalSeconds = currentMovement?.durationSeconds ?: 0
@@ -294,11 +297,11 @@ fun DynamicWarmUpPlayerContent(
 
                 Button(
                     onClick = {
-                        if (currentIndex < totalMovements - 1) {
-                            currentIndex += 1
+                        completedMovementIndices = completedMovementIndices + currentIndex
+                        if (nextIncompleteIndex != null) {
+                            currentIndex = nextIncompleteIndex
                             isTimerRunning = false
                         } else {
-                            isCompleted = true
                             soundPlayer.playRestCompleteSound()
                             soundPlayer.vibrateRestComplete()
                         }
@@ -313,7 +316,7 @@ fun DynamicWarmUpPlayerContent(
                     ),
                     shape = RoundedCornerShape(10.dp),
                 ) {
-                    if (currentIndex < totalMovements - 1) {
+                    if (nextIncompleteIndex != null) {
                         Column(
                             horizontalAlignment = Alignment.End,
                             verticalArrangement = Arrangement.Center,
@@ -372,7 +375,7 @@ fun DynamicWarmUpPlayerContent(
                 ) {
                     routine.movements.forEachIndexed { i, m ->
                         val isCurr = i == currentIndex
-                        val isDone = i < currentIndex
+                        val isDone = i in completedMovementIndices
                         Surface(
                             onClick = {
                                 currentIndex = i
