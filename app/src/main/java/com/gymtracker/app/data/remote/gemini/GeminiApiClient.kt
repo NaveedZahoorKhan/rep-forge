@@ -203,7 +203,7 @@ open class GeminiApiClient @Inject constructor() {
         }
     }
 
-    suspend fun syncDailyProgress(
+    open suspend fun syncDailyProgress(
         userProfile: UserProfileEntity?,
         healthProfile: UserHealthProfileEntity,
         recentSessions: List<WorkoutSessionEntity>,
