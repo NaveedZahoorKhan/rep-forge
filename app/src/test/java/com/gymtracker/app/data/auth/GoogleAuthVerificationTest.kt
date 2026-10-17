@@ -161,8 +161,12 @@ private class FakeGymDao : GymDao {
     override fun observeNutritionLog(dateEpochDay: Long): Flow<NutritionLogEntity?> = MutableStateFlow(null)
     override suspend fun getNutritionLogs(): List<NutritionLogEntity> = emptyList()
     override fun observeMeals(dateEpochDay: Long): Flow<List<MealEntity>> = MutableStateFlow(emptyList())
+    override suspend fun getMealsForDate(dateEpochDay: Long): List<MealEntity> = emptyList()
+    override suspend fun getMeal(id: String): MealEntity? = null
     override suspend fun getMeals(): List<MealEntity> = emptyList()
+    override suspend fun deleteMeal(id: String) {}
     override fun observeWater(dateEpochDay: Long): Flow<WaterLogEntity?> = MutableStateFlow(null)
+    override suspend fun getWaterForDate(dateEpochDay: Long): WaterLogEntity? = null
     override suspend fun getWaterLogs(): List<WaterLogEntity> = emptyList()
     override fun observeWeightLogs(): Flow<List<WeightLogEntity>> = MutableStateFlow(emptyList())
     override suspend fun getWeightLogs(): List<WeightLogEntity> = emptyList()
