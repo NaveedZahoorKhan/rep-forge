@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -63,6 +65,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gymtracker.app.data.local.entity.label
@@ -107,13 +110,20 @@ fun DynamicWarmUpPlayerContent(
     onStartWorkout: ((workoutId: String) -> Unit)? = null,
     targetWorkoutId: String = "",
 ) {
-    var currentIndex by remember { mutableIntStateOf(0) }
-    var isCompleted by remember { mutableStateOf(false) }
+    var currentIndex by remember(routine) { mutableIntStateOf(0) }
+    var completedMovementIndices by remember(routine) { mutableStateOf(emptySet<Int>()) }
     val amberFire = Color(0xFFFF6F00)
 
     val currentMovement = routine.movements.getOrNull(currentIndex)
     val totalMovements = routine.movements.size
-    val progress = if (totalMovements > 0) (currentIndex + 1).toFloat() / totalMovements else 1f
+    val completedMovements = completedMovementIndices.size
+    val isCompleted = totalMovements > 0 && completedMovements == totalMovements
+    val progress = if (totalMovements > 0) completedMovements.toFloat() / totalMovements else 0f
+
+    val prevMovement = routine.movements.getOrNull(currentIndex - 1)
+    val nextIncompleteIndex = ((currentIndex + 1 until totalMovements) + (0 until currentIndex))
+        .firstOrNull { it !in completedMovementIndices }
+    val nextMovement = nextIncompleteIndex?.let(routine.movements::get)
 
     // Timer state for timed movements
     val totalSeconds = currentMovement?.durationSeconds ?: 0
@@ -253,40 +263,98 @@ fun DynamicWarmUpPlayerContent(
                         }
                     },
                     enabled = currentIndex > 0,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp),
                     shape = RoundedCornerShape(10.dp),
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous")
-                    Spacer(Modifier.width(4.dp))
-                    Text("Prev")
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Previous",
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Column(
+                        horizontalAlignment = Alignment.Start,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = "Prev",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        if (prevMovement != null) {
+                            Text(
+                                text = prevMovement.name,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
 
                 Button(
                     onClick = {
-                        if (currentIndex < totalMovements - 1) {
-                            currentIndex += 1
+                        completedMovementIndices = completedMovementIndices + currentIndex
+                        if (nextIncompleteIndex != null) {
+                            currentIndex = nextIncompleteIndex
                             isTimerRunning = false
                         } else {
-                            isCompleted = true
                             soundPlayer.playRestCompleteSound()
                             soundPlayer.vibrateRestComplete()
                         }
                     },
-                    modifier = Modifier.weight(1.5f).testTag("warmup_next_done_btn"),
+                    modifier = Modifier
+                        .weight(1.3f)
+                        .heightIn(min = 48.dp)
+                        .testTag("warmup_next_done_btn"),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = amberFire,
                         contentColor = Color.White,
                     ),
                     shape = RoundedCornerShape(10.dp),
                 ) {
-                    if (currentIndex < totalMovements - 1) {
-                        Text("Done • Next", fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.width(4.dp))
-                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next")
-                    } else {
-                        Icon(Icons.Default.CheckCircle, contentDescription = null)
+                    if (nextIncompleteIndex != null) {
+                        Column(
+                            horizontalAlignment = Alignment.End,
+                            verticalArrangement = Arrangement.Center,
+                            modifier = Modifier.weight(1f, fill = false)
+                        ) {
+                            Text(
+                                text = "Done • Next",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (nextMovement != null) {
+                                Text(
+                                    text = nextMovement.name,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    color = Color.White.copy(alpha = 0.85f)
+                                )
+                            }
+                        }
                         Spacer(Modifier.width(6.dp))
-                        Text("Finish Warm-Up", fontWeight = FontWeight.Bold)
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "Next",
+                            modifier = Modifier.size(18.dp)
+                        )
+                    } else {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "Finish Warm-Up",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.labelLarge
+                        )
                     }
                 }
             }
@@ -300,29 +368,62 @@ fun DynamicWarmUpPlayerContent(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     routine.movements.forEachIndexed { i, m ->
                         val isCurr = i == currentIndex
+                        val isDone = i in completedMovementIndices
                         Surface(
                             onClick = {
                                 currentIndex = i
                                 isTimerRunning = false
                             },
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (isCurr) amberFire.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            border = if (isCurr) BorderStroke(1.dp, amberFire) else null,
-                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp),
+                            color = when {
+                                isCurr -> amberFire.copy(alpha = 0.2f)
+                                isDone -> MaterialTheme.colorScheme.surfaceVariant
+                                else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                            },
+                            border = if (isCurr) BorderStroke(1.5.dp, amberFire) else null,
+                            modifier = Modifier.heightIn(min = 48.dp),
                         ) {
-                            Box(
-                                modifier = Modifier.padding(vertical = 8.dp),
-                                contentAlignment = Alignment.Center,
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
+                                if (isDone) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = "Completed",
+                                        tint = amberFire,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(18.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                if (isCurr) amberFire else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
+                                            ),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Text(
+                                            text = "${i + 1}",
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isCurr) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontSize = 11.sp,
+                                        )
+                                    }
+                                }
                                 Text(
-                                    text = "${i + 1}",
-                                    fontWeight = if (isCurr) FontWeight.ExtraBold else FontWeight.Medium,
-                                    color = if (isCurr) amberFire else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    text = m.name,
+                                    fontWeight = if (isCurr) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isCurr) amberFire else MaterialTheme.colorScheme.onSurface,
                                     fontSize = 12.sp,
                                 )
                             }
@@ -471,6 +572,7 @@ private fun MovementActiveCard(
                                     containerColor = if (isTimerRunning) MaterialTheme.colorScheme.secondary else amberFire,
                                 ),
                                 shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.heightIn(min = 48.dp),
                             ) {
                                 Icon(
                                     imageVector = if (isTimerRunning) Icons.Default.Pause else Icons.Default.PlayArrow,
@@ -484,6 +586,7 @@ private fun MovementActiveCard(
                             OutlinedButton(
                                 onClick = onResetTimer,
                                 shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.heightIn(min = 48.dp),
                             ) {
                                 Icon(Icons.Default.Refresh, contentDescription = "Reset", modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(4.dp))
@@ -654,6 +757,39 @@ private fun WarmUpCompletionCelebration(
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
+            // Short summary of completed movements
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "Summary (${routine.movements.size} Movements Finished):",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = amberFire,
+                )
+                routine.movements.forEachIndexed { idx, m ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = null,
+                            tint = amberFire,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Text(
+                            text = "${idx + 1}. ${m.name}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
             if (targetWorkoutId.isNotBlank() && onStartWorkout != null) {
                 Button(
                     onClick = {
@@ -662,7 +798,7 @@ private fun WarmUpCompletionCelebration(
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
+                        .heightIn(min = 48.dp)
                         .testTag("warmup_start_workout_now_btn"),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = amberFire,
@@ -687,7 +823,7 @@ private fun WarmUpCompletionCelebration(
                 onClick = onDismiss,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(44.dp),
+                    .heightIn(min = 48.dp),
                 shape = RoundedCornerShape(10.dp),
             ) {
                 Text("Done")
