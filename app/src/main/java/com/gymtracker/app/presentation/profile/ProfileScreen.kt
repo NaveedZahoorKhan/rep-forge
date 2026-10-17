@@ -2,6 +2,12 @@
 
 package com.gymtracker.app.presentation.profile
 
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.rememberTimePickerState
+import java.util.Calendar
+
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -169,7 +175,10 @@ class ProfileViewModel @Inject constructor(
         private set
 
     fun save(profile: UserProfileEntity) {
-        viewModelScope.launch { repository.createOrUpdateProfile(profile) }
+        viewModelScope.launch {
+            repository.createOrUpdateProfile(profile)
+            transient = transient.copy(status = "Settings saved successfully")
+        }
     }
 
     fun scheduleWaterReminder(intervalHours: Int) {
@@ -325,7 +334,21 @@ class ProfileViewModel @Inject constructor(
     fun createReminder(title: String, timeMinutes: Int) {
         viewModelScope.launch {
             repository.upsertReminder(ReminderEntity(title = title, body = "Training time", timeMinutes = timeMinutes))
+            val targetHour = timeMinutes / 60
+            val targetMinute = timeMinutes % 60
+            val now = Calendar.getInstance()
+            val target = Calendar.getInstance().apply {
+                set(Calendar.HOUR_OF_DAY, targetHour)
+                set(Calendar.MINUTE, targetMinute)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+                if (before(now)) {
+                    add(Calendar.DAY_OF_YEAR, 1)
+                }
+            }
+            val initialDelayMs = target.timeInMillis - now.timeInMillis
             val request = PeriodicWorkRequestBuilder<WorkoutReminderWorker>(1, TimeUnit.DAYS)
+                .setInitialDelay(initialDelayMs, TimeUnit.MILLISECONDS)
                 .setInputData(workDataOf(WorkoutReminderWorker.KEY_TITLE to title, WorkoutReminderWorker.KEY_BODY to "Training time"))
                 .build()
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
@@ -333,6 +356,8 @@ class ProfileViewModel @Inject constructor(
                 ExistingPeriodicWorkPolicy.UPDATE,
                 request,
             )
+            val formattedTime = String.format(java.util.Locale.getDefault(), "%02d:%02d", targetHour, targetMinute)
+            transient = transient.copy(status = "Workout reminder scheduled for $formattedTime")
         }
     }
 
@@ -735,19 +760,35 @@ private fun EquipmentsPanel(
 // -------------------------------------------------------------
 // SETTINGS PANEL
 // -------------------------------------------------------------
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SettingsPanel(profile: UserProfileEntity, reminders: List<ReminderEntity>, viewModel: ProfileViewModel) {
     var name by remember(profile.displayName) { mutableStateOf(profile.displayName) }
     var gender by remember(profile.gender) { mutableStateOf(profile.gender) }
     var goal by remember(profile.primaryGoal) { mutableStateOf(profile.primaryGoal) }
-    var heightStr by remember(profile.heightCm) { mutableStateOf(profile.heightCm.toString()) }
-    var weightStr by remember(profile.weightKg) { mutableStateOf(profile.weightKg.toString()) }
+    var unitSystem by remember(profile.unitSystem) { mutableStateOf(profile.unitSystem) }
+
+    var heightStr by remember(profile.heightCm, profile.unitSystem) {
+        val h = if (profile.unitSystem == UnitSystem.IMPERIAL) profile.heightCm / 2.54 else profile.heightCm
+        mutableStateOf(String.format(java.util.Locale.US, "%.1f", h))
+    }
+    var weightStr by remember(profile.weightKg, profile.unitSystem) {
+        val w = if (profile.unitSystem == UnitSystem.IMPERIAL) profile.weightKg * 2.20462262185 else profile.weightKg
+        mutableStateOf(String.format(java.util.Locale.US, "%.1f", w))
+    }
+
     var split by remember(profile.preferredSplit) { mutableStateOf(profile.preferredSplit.ifBlank { "Push Pull Legs (PPL)" }) }
     var rest by remember(profile.defaultRestSeconds) { mutableStateOf(profile.defaultRestSeconds.toString()) }
     var calories by remember(profile.calorieGoal) { mutableStateOf(profile.calorieGoal.toString()) }
     var water by remember(profile.waterGoalMl) { mutableStateOf(profile.waterGoalMl.toString()) }
     var reminderTitle by remember { mutableStateOf("Workout reminder") }
-    var reminderTime by remember { mutableStateOf("1080") }
+
+    var selectedHour by remember { mutableIntStateOf(18) }
+    var selectedMinute by remember { mutableIntStateOf(0) }
+    var showTimePicker by remember { mutableStateOf(false) }
+
+    var settingsFeedback by remember { mutableStateOf("") }
+    var reminderFeedback by remember { mutableStateOf("") }
 
     val goals = listOf("Lose weight", "Build muscle", "Gain strength", "Tone & Endurance")
 
@@ -762,8 +803,8 @@ private fun SettingsPanel(profile: UserProfileEntity, reminders: List<ReminderEn
     fun autoCalculateCalories() {
         val rawW = weightStr.toDoubleOrNull() ?: 75.0
         val rawH = heightStr.toDoubleOrNull() ?: 175.0
-        val wKg = if (profile.unitSystem == UnitSystem.IMPERIAL) rawW * 0.45359237 else rawW
-        val hCm = if (profile.unitSystem == UnitSystem.IMPERIAL) rawH * 2.54 else rawH
+        val wKg = if (unitSystem == UnitSystem.IMPERIAL) rawW / 2.20462262185 else rawW
+        val hCm = if (unitSystem == UnitSystem.IMPERIAL) rawH * 2.54 else rawH
         val calculated = NutritionCalculator.autoCalculateTargetCalories(
             weightKg = wKg,
             heightCm = hCm,
@@ -856,9 +897,33 @@ private fun SettingsPanel(profile: UserProfileEntity, reminders: List<ReminderEn
                         }
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        UnitSystem.entries.forEach {
-                            FilterChip(selected = profile.unitSystem == it, onClick = { viewModel.save(profile.copy(unitSystem = it)) }, label = { Text(if (it == UnitSystem.METRIC) "kg/cm" else "lb/in") })
+                    // Unit System Switcher
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Unit System", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            UnitSystem.entries.forEach { unit ->
+                                FilterChip(
+                                    selected = unitSystem == unit,
+                                    onClick = {
+                                        if (unitSystem != unit) {
+                                            val currentH = heightStr.toDoubleOrNull()
+                                            val currentW = weightStr.toDoubleOrNull()
+
+                                            if (unit == UnitSystem.IMPERIAL && unitSystem == UnitSystem.METRIC) {
+                                                // cm -> inches, kg -> lbs
+                                                if (currentH != null) heightStr = String.format(java.util.Locale.US, "%.1f", currentH / 2.54)
+                                                if (currentW != null) weightStr = String.format(java.util.Locale.US, "%.1f", currentW * 2.20462262185)
+                                            } else if (unit == UnitSystem.METRIC && unitSystem == UnitSystem.IMPERIAL) {
+                                                // inches -> cm, lbs -> kg
+                                                if (currentH != null) heightStr = String.format(java.util.Locale.US, "%.1f", currentH * 2.54)
+                                                if (currentW != null) weightStr = String.format(java.util.Locale.US, "%.1f", currentW / 2.20462262185)
+                                            }
+                                            unitSystem = unit
+                                        }
+                                    },
+                                    label = { Text(if (unit == UnitSystem.METRIC) "Metric (kg/cm)" else "Imperial (lb/in)") }
+                                )
+                            }
                         }
                     }
 
@@ -935,7 +1000,7 @@ private fun SettingsPanel(profile: UserProfileEntity, reminders: List<ReminderEn
                                 heightStr = it
                                 if (it.toDoubleOrNull() != null) autoCalculateCalories()
                             },
-                            label = { Text("Height (${if (profile.unitSystem == UnitSystem.METRIC) "cm" else "in"})") },
+                            label = { Text("Height (${if (unitSystem == UnitSystem.METRIC) "cm" else "in"})") },
                             modifier = Modifier.weight(1f),
                             singleLine = true
                         )
@@ -945,7 +1010,7 @@ private fun SettingsPanel(profile: UserProfileEntity, reminders: List<ReminderEn
                                 weightStr = it
                                 if (it.toDoubleOrNull() != null) autoCalculateCalories()
                             },
-                            label = { Text("Weight (${if (profile.unitSystem == UnitSystem.METRIC) "kg" else "lb"})") },
+                            label = { Text("Weight (${if (unitSystem == UnitSystem.METRIC) "kg" else "lb"})") },
                             modifier = Modifier.weight(1f),
                             singleLine = true
                         )
@@ -975,7 +1040,7 @@ private fun SettingsPanel(profile: UserProfileEntity, reminders: List<ReminderEn
                             label = { Text("Daily Calories") },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
-                            supportingText = { Text("Calculated from $weightStr ${if (profile.unitSystem == UnitSystem.METRIC) "kg" else "lb"} & $heightStr ${if (profile.unitSystem == UnitSystem.METRIC) "cm" else "in"} for $goal") }
+                            supportingText = { Text("Calculated from $weightStr ${if (unitSystem == UnitSystem.METRIC) "kg" else "lb"} & $heightStr ${if (unitSystem == UnitSystem.METRIC) "cm" else "in"} for $goal") }
                         )
                     }
 
@@ -983,24 +1048,55 @@ private fun SettingsPanel(profile: UserProfileEntity, reminders: List<ReminderEn
                     ToggleRow("Sound cues", profile.soundEnabled) { viewModel.save(profile.copy(soundEnabled = it)) }
                     ToggleRow("Vibration feedback", profile.vibrationEnabled) { viewModel.save(profile.copy(vibrationEnabled = it)) }
                     ToggleRow("Daily workout reminders", profile.workoutReminderEnabled) { viewModel.save(profile.copy(workoutReminderEnabled = it)) }
-                    Button(onClick = {
-                        viewModel.save(
-                            profile.copy(
-                                displayName = name,
-                                gender = gender,
-                                primaryGoal = goal,
-                                heightCm = heightStr.toDoubleOrNull() ?: profile.heightCm,
-                                weightKg = weightStr.toDoubleOrNull() ?: profile.weightKg,
-                                preferredSplit = split,
-                                defaultRestSeconds = rest.toIntOrNull() ?: profile.defaultRestSeconds,
-                                calorieGoal = calories.toIntOrNull() ?: profile.calorieGoal,
-                                waterGoalMl = water.toIntOrNull() ?: profile.waterGoalMl,
+
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Button(
+                            onClick = {
+                                val parsedH = heightStr.toDoubleOrNull()
+                                val parsedW = weightStr.toDoubleOrNull()
+
+                                val heightCmValue = if (parsedH != null) {
+                                    if (unitSystem == UnitSystem.IMPERIAL) parsedH * 2.54 else parsedH
+                                } else profile.heightCm
+
+                                val weightKgValue = if (parsedW != null) {
+                                    if (unitSystem == UnitSystem.IMPERIAL) parsedW / 2.20462262185 else parsedW
+                                } else profile.weightKg
+
+                                viewModel.save(
+                                    profile.copy(
+                                        displayName = name,
+                                        gender = gender,
+                                        primaryGoal = goal,
+                                        unitSystem = unitSystem,
+                                        heightCm = heightCmValue,
+                                        weightKg = weightKgValue,
+                                        preferredSplit = split,
+                                        defaultRestSeconds = rest.toIntOrNull() ?: profile.defaultRestSeconds,
+                                        calorieGoal = calories.toIntOrNull() ?: profile.calorieGoal,
+                                        waterGoalMl = water.toIntOrNull() ?: profile.waterGoalMl,
+                                    )
+                                )
+                                settingsFeedback = "✅ Profile settings saved successfully!"
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Save settings & Update Split")
+                        }
+
+                        if (settingsFeedback.isNotBlank()) {
+                            Text(
+                                text = settingsFeedback,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
                             )
-                        )
-                    }, modifier = Modifier.fillMaxWidth()) { Text("Save settings & Update Split") }
+                        }
+                    }
                 }
             }
         }
+
         // -------------------------------------------------------------
         // WATER REMINDERS & NOTIFICATIONS
         // -------------------------------------------------------------
@@ -1088,14 +1184,57 @@ private fun SettingsPanel(profile: UserProfileEntity, reminders: List<ReminderEn
             ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     SectionTitle("Daily workout reminders")
-                    OutlinedTextField(value = reminderTitle, onValueChange = { reminderTitle = it }, label = { Text("Title") }, modifier = Modifier.fillMaxWidth())
-                    NumberField("Time minutes after midnight (e.g. 540 = 9:00 AM)", reminderTime, { reminderTime = it }, Modifier.fillMaxWidth())
-                    Button(onClick = { viewModel.createReminder(reminderTitle, reminderTime.toIntOrNull() ?: 1080) }, modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = reminderTitle,
+                        onValueChange = { reminderTitle = it },
+                        label = { Text("Title") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+
+                    val displayTime = String.format(java.util.Locale.getDefault(), "%02d:%02d", selectedHour, selectedMinute)
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text("Scheduled Local Time", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(displayTime, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        }
+
+                        OutlinedButton(
+                            onClick = { showTimePicker = true },
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Select Time")
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            val timeMinutes = selectedHour * 60 + selectedMinute
+                            viewModel.createReminder(reminderTitle, timeMinutes)
+                            reminderFeedback = "✅ Workout reminder scheduled for $displayTime local time!"
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         Text("Schedule daily reminder")
+                    }
+
+                    if (reminderFeedback.isNotBlank()) {
+                        Text(
+                            text = reminderFeedback,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }
         }
+
         items(reminders, key = { it.id }) {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -1103,12 +1242,46 @@ private fun SettingsPanel(profile: UserProfileEntity, reminders: List<ReminderEn
             ) {
                 Column(Modifier.padding(12.dp)) {
                     Text(it.title, fontWeight = FontWeight.SemiBold)
-                    Text("At ${it.timeMinutes / 60}:${(it.timeMinutes % 60).toString().padStart(2, '0')}")
+                    Text("At ${String.format(java.util.Locale.getDefault(), "%02d:%02d", it.timeMinutes / 60, it.timeMinutes % 60)}")
                 }
             }
         }
     }
+
+    if (showTimePicker) {
+        val timePickerState = rememberTimePickerState(
+            initialHour = selectedHour,
+            initialMinute = selectedMinute,
+            is24Hour = true
+        )
+        AlertDialog(
+            onDismissRequest = { showTimePicker = false },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        selectedHour = timePickerState.hour
+                        selectedMinute = timePickerState.minute
+                        showTimePicker = false
+                    }
+                ) {
+                    Text("OK")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showTimePicker = false }) {
+                    Text("Cancel")
+                }
+            },
+            title = { Text("Set Reminder Time") },
+            text = {
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    TimePicker(state = timePickerState)
+                }
+            }
+        )
+    }
 }
+
 
 @Composable
 private fun DataPanel(
