@@ -178,10 +178,7 @@ class GeminiCoachViewModelTest {
             }
         } as GymRepository
 
-        val dummyContext = Proxy.newProxyInstance(
-            Context::class.java.classLoader,
-            arrayOf(Context::class.java)
-        ) { _, _, _ -> null } as Context
+        val dummyContext = object : android.content.ContextWrapper(null) {}
 
         val dummyApiClient = object : GeminiApiClient() {
             override fun isLiveApiConfigured(): Boolean = isLiveApiConfigured

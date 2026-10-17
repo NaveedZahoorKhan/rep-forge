@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalLayoutApi::class)
+
 package com.gymtracker.app.presentation.gemini
 
 import android.graphics.Bitmap
