@@ -178,6 +178,7 @@ class ActiveWorkoutTimerTest {
         val completedSetReturn = PerformedSetEntity(
             id = "set1",
             sessionId = "s1",
+            workoutExerciseId = "we1",
             exerciseId = "ex1",
             exerciseName = "Bench Press",
             setNumber = 1,
@@ -215,6 +216,7 @@ class ActiveWorkoutTimerTest {
         val uncompletedSet = PerformedSetEntity(
             id = "set1",
             sessionId = "s1",
+            workoutExerciseId = "we1",
             exerciseId = "ex1",
             exerciseName = "Bench Press",
             setNumber = 1,
@@ -236,6 +238,7 @@ class ActiveWorkoutTimerTest {
         val completedSetReturn = PerformedSetEntity(
             id = "set1",
             sessionId = "s1",
+            workoutExerciseId = "we1",
             exerciseId = "ex1",
             exerciseName = "Bench Press",
             setNumber = 1,
@@ -273,6 +276,7 @@ class ActiveWorkoutTimerTest {
         val alreadyCompletedSet = PerformedSetEntity(
             id = "set1",
             sessionId = "s1",
+            workoutExerciseId = "we1",
             exerciseId = "ex1",
             exerciseName = "Bench Press",
             setNumber = 1,
