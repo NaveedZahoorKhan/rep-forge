@@ -382,9 +382,8 @@ fun DashboardScreen(
         item {
             InAppDailyRemindersCard(
                 state = state,
-                onStartWorkout = onStartWorkout,
                 onAddWater = viewModel::addWater,
-                onLogWeight = { viewModel.addWeight(state.profile.weightKg) }
+                onLogWeight = viewModel::addWeight
             )
         }
 
@@ -874,8 +873,8 @@ fun DashboardScreen(
             WeightLogChartCard(
                 weights = state.weights,
                 unitSystem = state.profile.unitSystem,
-                onAddWeight = { viewModel.addWeight(state.profile.weightKg) },
-                onDeleteWeight = null,
+                onAddWeight = viewModel::addWeight,
+                onDeleteWeight = viewModel::deleteWeight,
             )
         }
 
@@ -965,12 +964,14 @@ fun DashboardScreen(
 @Composable
 fun InAppDailyRemindersCard(
     state: DashboardUiState,
-    onStartWorkout: (String) -> Unit,
     onAddWater: (Int) -> Unit,
-    onLogWeight: () -> Unit,
+    onLogWeight: (Double) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var isDismissed by remember { mutableStateOf(false) }
+    var showWeightInput by remember { mutableStateOf(false) }
+    var inputWeightStr by remember { mutableStateOf("") }
+
     if (isDismissed) return
 
     val currentWater = state.todayWater?.milliliters ?: 0
@@ -978,6 +979,12 @@ fun InAppDailyRemindersCard(
     val waterProgress = (currentWater.toFloat() / waterGoal.toFloat()).coerceIn(0f, 1f)
     val hasWorkoutToday = state.todayWorkout != null
     val isWorkoutActive = state.activeSession != null
+
+    val unitSystem = state.profile.unitSystem
+    val unitLabel = if (unitSystem == com.gymtracker.app.data.local.entity.UnitSystem.METRIC) "kg" else "lb"
+    val multiplier = if (unitSystem == com.gymtracker.app.data.local.entity.UnitSystem.METRIC) 1.0 else 2.20462
+    val latestLog = state.weights.maxByOrNull { it.loggedAt }
+    val currentDisplayW = latestLog?.let { it.weightKg * multiplier } ?: (state.profile.weightKg * multiplier)
 
     Card(
         colors = CardDefaults.cardColors(
@@ -1105,7 +1112,7 @@ fun InAppDailyRemindersCard(
                 }
             }
 
-            // Workout Reminder (if today has a workout and not currently in active session)
+            // Workout Reminder status indicator (if today has a workout and not currently in active session)
             if (hasWorkoutToday && !isWorkoutActive) {
                 Surface(
                     shape = RoundedCornerShape(10.dp),
@@ -1138,19 +1145,23 @@ fun InAppDailyRemindersCard(
                                     fontSize = 13.sp
                                 )
                                 Text(
-                                    "Ready to train today?",
+                                    "Scheduled for today • See main workout action below",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
-                        Button(
-                            onClick = { state.todayWorkout?.let { onStartWorkout(it.id) } },
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.height(32.dp)
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
                         ) {
-                            Text("Start", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                "SCHEDULED",
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.sp,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                            )
                         }
                     }
                 }
@@ -1163,38 +1174,87 @@ fun InAppDailyRemindersCard(
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            Icons.Default.MonitorWeight,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.tertiary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Column {
-                            Text("Weight Check-in", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                            val latestW = state.weights.maxByOrNull { it.loggedAt }
-                            val textDesc = if (latestW != null) "Last: ${latestW.weightKg} kg" else "No weigh-in yet"
-                            Text(textDesc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                Icons.Default.MonitorWeight,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.tertiary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Column {
+                                Text("Weight Check-in", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                val textDesc = if (latestLog != null) {
+                                    String.format(java.util.Locale.getDefault(), "Last: %.1f %s", currentDisplayW, unitLabel)
+                                } else {
+                                    "No weigh-in yet"
+                                }
+                                Text(textDesc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                if (inputWeightStr.isBlank()) {
+                                    inputWeightStr = String.format(java.util.Locale.US, "%.1f", currentDisplayW)
+                                }
+                                showWeightInput = !showWeightInput
+                            },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text(if (showWeightInput) "Cancel" else "Log Weight", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
-                    OutlinedButton(
-                        onClick = onLogWeight,
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                        shape = RoundedCornerShape(6.dp),
-                        modifier = Modifier.height(32.dp)
-                    ) {
-                        Text("Log", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+
+                    AnimatedVisibility(visible = showWeightInput) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            androidx.compose.material3.OutlinedTextField(
+                                value = inputWeightStr,
+                                onValueChange = { inputWeightStr = it },
+                                label = { Text("Weight ($unitLabel)") },
+                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
+                                ),
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Button(
+                                onClick = {
+                                    val entered = inputWeightStr.replace(',', '.').toDoubleOrNull()
+                                    if (entered != null && entered > 0.0) {
+                                        val weightInKg = if (unitSystem == com.gymtracker.app.data.local.entity.UnitSystem.METRIC) {
+                                            entered
+                                        } else {
+                                            entered / 2.20462
+                                        }
+                                        onLogWeight(weightInKg)
+                                        showWeightInput = false
+                                    }
+                                },
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Save", fontSize = 12.sp)
+                            }
+                        }
                     }
                 }
             }
