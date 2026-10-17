@@ -39,12 +39,20 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -315,7 +323,7 @@ class ProfileViewModel @Inject constructor(
 
             val equipment = GymEquipmentEntity(
                 name = name.trim(),
-                category = category,
+                category = category.trim().ifBlank { "Machine" },
                 location = location,
                 photoUri = persistentUriStr,
                 notes = notes.trim(),
@@ -325,9 +333,57 @@ class ProfileViewModel @Inject constructor(
         }
     }
 
+    fun updateEquipment(
+        id: String,
+        name: String,
+        category: String,
+        location: String,
+        photoUri: Uri?,
+        existingPhotoUriStr: String?,
+        notes: String
+    ) {
+        if (name.isBlank()) return
+        viewModelScope.launch {
+            var persistentUriStr: String? = existingPhotoUriStr
+            if (photoUri != null && photoUri.toString() != existingPhotoUriStr) {
+                persistentUriStr = try {
+                    val folder = File(context.filesDir, "equipments").apply { mkdirs() }
+                    val targetFile = File(folder, "eq_${UUID.randomUUID()}.jpg")
+                    context.contentResolver.openInputStream(photoUri)?.use { input ->
+                        targetFile.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    targetFile.toURI().toString()
+                } catch (e: Exception) {
+                    photoUri.toString()
+                }
+            } else if (photoUri == null && existingPhotoUriStr == null) {
+                persistentUriStr = null
+            }
+
+            val equipment = GymEquipmentEntity(
+                id = id,
+                name = name.trim(),
+                category = category.trim().ifBlank { "Machine" },
+                location = location,
+                photoUri = persistentUriStr,
+                notes = notes.trim(),
+            )
+            repository.addGymEquipment(equipment)
+            transient = transient.copy(status = "Machine updated successfully")
+        }
+    }
+
+    fun restoreEquipment(equipment: GymEquipmentEntity) {
+        viewModelScope.launch {
+            repository.addGymEquipment(equipment)
+            transient = transient.copy(status = "Restored ${equipment.name}")
+        }
+    }
+
     fun deleteEquipment(id: String) {
         viewModelScope.launch {
             repository.deleteGymEquipment(id)
+            transient = transient.copy(status = "Equipment deleted")
         }
     }
 
@@ -538,222 +594,403 @@ private fun EquipmentsPanel(
     equipments: List<GymEquipmentEntity>,
     viewModel: ProfileViewModel,
 ) {
+    val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
+
     var showAddForm by remember { mutableStateOf(false) }
+    var editingEquipment by remember { mutableStateOf<GymEquipmentEntity?>(null) }
+    var equipmentToDelete by remember { mutableStateOf<GymEquipmentEntity?>(null) }
+
     var machineName by remember { mutableStateOf("") }
     var location by remember { mutableStateOf("Gym") }
     var category by remember { mutableStateOf("Machine") }
     var selectedPhotoUri by remember { mutableStateOf<Uri?>(null) }
+    var existingPhotoUriStr by remember { mutableStateOf<String?>(null) }
     var machineNotes by remember { mutableStateOf("") }
 
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) selectedPhotoUri = uri
+        if (uri != null) {
+            selectedPhotoUri = uri
+            existingPhotoUriStr = null
+        }
     }
 
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
-            ) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(Icons.Default.FitnessCenter, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Text("Profile Gym Equipments (${equipments.size})", fontWeight = FontWeight.Bold)
+    fun resetForm() {
+        machineName = ""
+        location = "Gym"
+        category = "Machine"
+        selectedPhotoUri = null
+        existingPhotoUriStr = null
+        machineNotes = ""
+        editingEquipment = null
+        showAddForm = false
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+                ) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Default.FitnessCenter, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Text("Profile Gym Equipments (${equipments.size})", fontWeight = FontWeight.Bold)
+                        }
+                        Text(
+                            "These uploaded images and machines are saved in your workout profile. Gemini automatically caters every workout routine to your available machines.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
-                    Text(
-                        "These uploaded images and machines are saved in your workout profile. Gemini automatically caters every workout routine to your available machines.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             }
-        }
 
-        item {
-            Button(
-                onClick = { showAddForm = !showAddForm },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp)
-            ) {
-                Icon(if (showAddForm) Icons.Default.Close else Icons.Default.Add, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text(if (showAddForm) "Cancel" else "Add Gym Machine or Equipment")
-            }
-        }
-
-        if (showAddForm) {
             item {
+                Button(
+                    onClick = {
+                        if (showAddForm) {
+                            resetForm()
+                        } else {
+                            resetForm()
+                            showAddForm = true
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(if (showAddForm) Icons.Default.Close else Icons.Default.Add, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (showAddForm) "Cancel" else "Add Gym Machine or Equipment")
+                }
+            }
+
+            if (showAddForm) {
+                item {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    ) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(
+                                if (editingEquipment != null) "Edit Machine / Gear" else "New Machine / Gear",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleSmall
+                            )
+
+                            Text("Location", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf("Gym", "Home").forEach { loc ->
+                                    FilterChip(
+                                        selected = location == loc,
+                                        onClick = { location = loc },
+                                        label = { Text(if (loc == "Gym") "Commercial Gym" else "Home") },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+
+                            OutlinedTextField(
+                                value = machineName,
+                                onValueChange = { machineName = it },
+                                label = { Text("Machine Name") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
+                            )
+
+                            Text("Category", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            val presetCategories = listOf("Machine", "Free Weight", "Cable", "Cardio", "Bodyweight", "Accessory")
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                presetCategories.forEach { cat ->
+                                    FilterChip(
+                                        selected = category.equals(cat, ignoreCase = true),
+                                        onClick = { category = cat },
+                                        label = { Text(cat) }
+                                    )
+                                }
+                            }
+
+                            OutlinedTextField(
+                                value = category,
+                                onValueChange = { category = it },
+                                label = { Text("Custom Category / Type") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
+                            )
+
+                            OutlinedTextField(
+                                value = machineNotes,
+                                onValueChange = { machineNotes = it },
+                                label = { Text("Notes (seat height, attachments, resistance ratio, etc.)") },
+                                modifier = Modifier.fillMaxWidth(),
+                                minLines = 2,
+                                maxLines = 4
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(if (selectedPhotoUri != null || !existingPhotoUriStr.isNullOrBlank()) "Change Photo" else "Upload Photo")
+                                }
+
+                                if (selectedPhotoUri != null || !existingPhotoUriStr.isNullOrBlank()) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(46.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp))
+                                    ) {
+                                        AsyncImage(
+                                            model = selectedPhotoUri ?: existingPhotoUriStr,
+                                            contentDescription = null,
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = {
+                                            selectedPhotoUri = null
+                                            existingPhotoUriStr = null
+                                        }
+                                    ) {
+                                        Text("Remove")
+                                    }
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = { resetForm() },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Cancel")
+                                }
+
+                                Button(
+                                    onClick = {
+                                        if (machineName.isNotBlank()) {
+                                            val name = machineName
+                                            val currentEditing = editingEquipment
+                                            if (currentEditing != null) {
+                                                viewModel.updateEquipment(
+                                                    id = currentEditing.id,
+                                                    name = name,
+                                                    category = category,
+                                                    location = location,
+                                                    photoUri = selectedPhotoUri,
+                                                    existingPhotoUriStr = existingPhotoUriStr,
+                                                    notes = machineNotes
+                                                )
+                                                coroutineScope.launch {
+                                                    snackbarHostState.showSnackbar("Updated \"$name\"")
+                                                }
+                                            } else {
+                                                viewModel.addEquipment(
+                                                    name = name,
+                                                    category = category,
+                                                    location = location,
+                                                    photoUri = selectedPhotoUri,
+                                                    notes = machineNotes
+                                                )
+                                                coroutineScope.launch {
+                                                    snackbarHostState.showSnackbar("Saved \"$name\" to profile")
+                                                }
+                                            }
+                                            resetForm()
+                                        }
+                                    },
+                                    enabled = machineName.isNotBlank(),
+                                    modifier = Modifier.weight(1.5f)
+                                ) {
+                                    Text(if (editingEquipment != null) "Update Equipment" else "Save to Profile")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (equipments.isEmpty()) {
+                item {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Default.FitnessCenter, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp))
+                            Text("No gym equipments registered", fontWeight = FontWeight.Bold)
+                            Text(
+                                "Tap 'Add Gym Machine or Equipment' above to upload photos and machine names for Gemini personalization.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+                    }
+                }
+            }
+
+            items(equipments, key = { it.id }) { eq ->
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                 ) {
-                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("New Machine / Gear", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
-
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf("Gym", "Home").forEach { loc ->
-                                FilterChip(
-                                    selected = location == loc,
-                                    onClick = { location = loc },
-                                    label = { Text(if (loc == "Gym") "Commercial Gym" else "Home") },
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-
-                        OutlinedTextField(
-                            value = machineName,
-                            onValueChange = { machineName = it },
-                            label = { Text("Machine Name") },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            OutlinedButton(
-                                onClick = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                                modifier = Modifier.weight(1f)
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        if (!eq.photoUri.isNullOrBlank()) {
+                            AsyncImage(
+                                model = eq.photoUri,
+                                contentDescription = eq.name,
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .clip(RoundedCornerShape(8.dp)),
+                                contentScale = ContentScale.Crop
+                            )
+                        } else {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                modifier = Modifier.size(56.dp)
                             ) {
-                                Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text(if (selectedPhotoUri != null) "Change Photo" else "Upload Photo")
-                            }
-
-                            if (selectedPhotoUri != null) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(46.dp)
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp))
-                                ) {
-                                    AsyncImage(
-                                        model = selectedPhotoUri,
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        if (eq.location == "Home") Icons.Default.Home else Icons.Default.FitnessCenter,
                                         contentDescription = null,
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentScale = ContentScale.Crop
+                                        tint = MaterialTheme.colorScheme.primary
                                     )
                                 }
                             }
                         }
 
-                        Button(
-                            onClick = {
-                                if (machineName.isNotBlank()) {
-                                    viewModel.addEquipment(machineName, category, location, selectedPhotoUri, machineNotes)
-                                    machineName = ""
-                                    selectedPhotoUri = null
-                                    showAddForm = false
+                        Column(Modifier.weight(1f)) {
+                            Text(eq.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = MaterialTheme.colorScheme.secondaryContainer,
+                                ) {
+                                    Text(
+                                        eq.location,
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
                                 }
-                            },
-                            enabled = machineName.isNotBlank(),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Save Machine to Profile")
-                        }
-                    }
-                }
-            }
-        }
-
-        if (equipments.isEmpty()) {
-            item {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(Icons.Default.FitnessCenter, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp))
-                        Text("No gym equipments registered", fontWeight = FontWeight.Bold)
-                        Text(
-                            "Tap 'Add Gym Machine or Equipment' above to upload photos and machine names for Gemini personalization.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                        )
-                    }
-                }
-            }
-        }
-
-        items(equipments, key = { it.id }) { eq ->
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-            ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    if (!eq.photoUri.isNullOrBlank()) {
-                        AsyncImage(
-                            model = eq.photoUri,
-                            contentDescription = eq.name,
-                            modifier = Modifier
-                                .size(56.dp)
-                                .clip(RoundedCornerShape(8.dp)),
-                            contentScale = ContentScale.Crop
-                        )
-                    } else {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                            modifier = Modifier.size(56.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    if (eq.location == "Home") Icons.Default.Home else Icons.Default.FitnessCenter,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                ) {
+                                    Text(
+                                        eq.category,
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
-                        }
-                    }
-
-                    Column(Modifier.weight(1f)) {
-                        Text(eq.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = MaterialTheme.colorScheme.secondaryContainer,
-                            ) {
+                            if (eq.notes.isNotBlank()) {
+                                Spacer(Modifier.height(4.dp))
                                 Text(
-                                    eq.location,
-                                    fontSize = 11.sp,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                    fontWeight = FontWeight.Medium,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer
-                                )
-                            }
-                            Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant,
-                            ) {
-                                Text(
-                                    eq.category,
-                                    fontSize = 11.sp,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    eq.notes,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
-                    }
 
-                    IconButton(onClick = { viewModel.deleteEquipment(eq.id) }) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
+                        IconButton(onClick = {
+                            editingEquipment = eq
+                            machineName = eq.name
+                            location = eq.location
+                            category = eq.category
+                            machineNotes = eq.notes
+                            existingPhotoUriStr = eq.photoUri
+                            selectedPhotoUri = eq.photoUri?.let { Uri.parse(it) }
+                            showAddForm = true
+                        }) {
+                            Icon(Icons.Default.Edit, contentDescription = "Edit Equipment", tint = MaterialTheme.colorScheme.primary)
+                        }
+
+                        IconButton(onClick = { equipmentToDelete = eq }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete Equipment", tint = MaterialTheme.colorScheme.error)
+                        }
                     }
                 }
             }
         }
+
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 16.dp)
+        )
+    }
+
+    if (equipmentToDelete != null) {
+        val target = equipmentToDelete!!
+        AlertDialog(
+            onDismissRequest = { equipmentToDelete = null },
+            title = { Text("Delete Equipment?") },
+            text = { Text("Are you sure you want to delete \"${target.name}\"? You can undo this action immediately after deletion.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val deleted = target
+                        equipmentToDelete = null
+                        viewModel.deleteEquipment(deleted.id)
+                        coroutineScope.launch {
+                            val result = snackbarHostState.showSnackbar(
+                                message = "Deleted \"${deleted.name}\"",
+                                actionLabel = "Undo",
+                                duration = SnackbarDuration.Short
+                            )
+                            if (result == SnackbarResult.ActionPerformed) {
+                                viewModel.restoreEquipment(deleted)
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { equipmentToDelete = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 

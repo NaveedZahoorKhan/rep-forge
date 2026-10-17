@@ -261,4 +261,50 @@ class ProfileViewModelTest {
 
         assertEquals("Cloud restore complete", viewModel.transient.status)
     }
+
+    @Test
+    fun `addEquipment updates transient status on completion`() = runTest(testDispatcher) {
+        val repo = createMockRepository()
+        val viewModel = createViewModel(repo)
+
+        viewModel.addEquipment("Leg Press", "Machine", "Gym", null, "Seat position 4")
+        runCurrent()
+
+        assertEquals("Machine saved to profile", viewModel.transient.status)
+    }
+
+    @Test
+    fun `updateEquipment updates equipment and sets status`() = runTest(testDispatcher) {
+        val repo = createMockRepository()
+        val viewModel = createViewModel(repo)
+
+        viewModel.updateEquipment(
+            id = "eq-1",
+            name = "Incline Bench",
+            category = "Free Weight",
+            location = "Gym",
+            photoUri = null,
+            existingPhotoUriStr = null,
+            notes = "Incline at 30 deg"
+        )
+        runCurrent()
+
+        assertEquals("Machine updated successfully", viewModel.transient.status)
+    }
+
+    @Test
+    fun `deleteEquipment and restoreEquipment update transient status correctly`() = runTest(testDispatcher) {
+        val repo = createMockRepository()
+        val viewModel = createViewModel(repo)
+
+        viewModel.deleteEquipment("eq-1")
+        runCurrent()
+        assertEquals("Equipment deleted", viewModel.transient.status)
+
+        val item = GymEquipmentEntity(id = "eq-1", name = "Incline Bench")
+        viewModel.restoreEquipment(item)
+        runCurrent()
+        assertEquals("Restored Incline Bench", viewModel.transient.status)
+    }
 }
+
