@@ -85,7 +85,6 @@ import com.gymtracker.app.data.health.HealthSyncService
 import com.gymtracker.app.presentation.components.GoogleAccountProfileCard
 import com.gymtracker.app.presentation.components.GoogleLogoIcon
 import com.gymtracker.app.presentation.components.GoogleSignInButton
-import com.gymtracker.app.presentation.components.GoogleSignInOptionsDialog
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -402,32 +401,10 @@ class ProfileViewModel @Inject constructor(
                         googlePhotoUrl = user.photoUrl,
                         googleId = user.id,
                     )
-                    transient = transient.copy(status = "Signed in as ${user.email} (Google Health Linked)")
-                    repository.syncProgressToGoogleHealth()
+                    transient = transient.copy(status = "Signed in as ${user.email}")
                 },
                 onFailure = {
-                    transient = transient.copy(status = it.message ?: "Google sign-in failed")
-                }
-            )
-        }
-    }
-
-    fun quickSignIn(email: String, name: String) {
-        viewModelScope.launch {
-            googleAuthService.quickSignIn(email, name).fold(
-                onSuccess = { user ->
-                    repository.updateUserGoogleAuth(
-                        googleLinked = true,
-                        googleEmail = user.email,
-                        googleDisplayName = user.displayName,
-                        googlePhotoUrl = user.photoUrl,
-                        googleId = user.id,
-                    )
-                    transient = transient.copy(status = "Connected as ${user.email}")
-                    repository.syncProgressToGoogleHealth()
-                },
-                onFailure = {
-                    transient = transient.copy(status = it.message ?: "Sign-in failed")
+                    transient = transient.copy(status = "Google sign-in failed: ${it.message ?: "Please check Google Play Services and try again."}")
                 }
             )
         }
@@ -487,7 +464,6 @@ fun ProfileScreen(
     val nutritionState by nutritionViewModel.state.collectAsStateWithLifecycle()
     val profile = baseState.profile ?: UserProfileEntity()
     var tab by remember { mutableIntStateOf(0) }
-    var showGoogleDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val signInLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         viewModel.handleGoogleSignInResult(it.data)
@@ -518,8 +494,7 @@ fun ProfileScreen(
                 3 -> DataPanel(
                     viewModel = viewModel,
                     profile = profile,
-                    onSignIn = { showGoogleDialog = true },
-                    onQuickSignIn = { showGoogleDialog = true },
+                    onSignIn = { signInLauncher.launch(viewModel.googleSignInIntent()) },
                     onSignOut = { viewModel.signOutGoogle() },
                     onSyncHealth = { viewModel.syncProgressToHealth() },
                     onOpenHealthSettings = { viewModel.openHealthConnectSettings(context) }
@@ -528,19 +503,6 @@ fun ProfileScreen(
         }
     }
 
-    if (showGoogleDialog) {
-        GoogleSignInOptionsDialog(
-            onDismiss = { showGoogleDialog = false },
-            onLaunchPlayServices = {
-                showGoogleDialog = false
-                signInLauncher.launch(viewModel.googleSignInIntent())
-            },
-            onQuickSignIn = { email, name ->
-                showGoogleDialog = false
-                viewModel.quickSignIn(email, name)
-            }
-        )
-    }
 }
 
 // -------------------------------------------------------------
@@ -1154,7 +1116,6 @@ private fun DataPanel(
     viewModel: ProfileViewModel,
     profile: UserProfileEntity,
     onSignIn: () -> Unit,
-    onQuickSignIn: () -> Unit,
     onSignOut: () -> Unit,
     onSyncHealth: () -> Unit,
     onOpenHealthSettings: () -> Unit,
@@ -1591,7 +1552,6 @@ private fun DataPanel(
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                             GoogleSignInButton(onClick = onSignIn, modifier = Modifier.weight(1f))
-                            OutlinedButton(onClick = onQuickSignIn) { Text("Quick Connect") }
                         }
                     }
                 }
