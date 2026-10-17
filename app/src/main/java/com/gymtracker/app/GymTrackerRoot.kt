@@ -39,10 +39,12 @@ import com.gymtracker.app.presentation.navigation.ActiveWorkoutRoute
 import com.gymtracker.app.presentation.navigation.DashboardRoute
 import com.gymtracker.app.presentation.navigation.GeminiCoachRoute
 import com.gymtracker.app.presentation.navigation.HistoryRoute
+import com.gymtracker.app.presentation.navigation.NutritionRoute
 import com.gymtracker.app.presentation.navigation.OnboardingRoute
 import com.gymtracker.app.presentation.navigation.ProfileRoute
 import com.gymtracker.app.presentation.navigation.ProgressRoute
 import com.gymtracker.app.presentation.navigation.WorkoutsRoute
+import com.gymtracker.app.presentation.nutrition.NutritionScreen
 import com.gymtracker.app.presentation.onboarding.OnboardingScreen
 import com.gymtracker.app.presentation.profile.ProfileScreen
 import com.gymtracker.app.presentation.progress.ProgressScreen
@@ -133,6 +135,7 @@ private fun GymTrackerNav(profile: UserProfileEntity) {
                     onOpenWorkouts = { navController.navigate(WorkoutsRoute) },
                     onOpenGemini = { navController.navigate(GeminiCoachRoute) },
                     onOpenHistory = { navController.navigate(HistoryRoute) },
+                    onOpenNutrition = { navController.navigate(NutritionRoute) },
                 )
             }
             composable<WorkoutsRoute> {
@@ -159,6 +162,7 @@ private fun GymTrackerNav(profile: UserProfileEntity) {
             }
             composable<ProgressRoute> { ProgressScreen() }
             composable<ProfileRoute> { ProfileScreen() }
+            composable<NutritionRoute> { NutritionScreen() }
             composable<GeminiCoachRoute> {
                 GeminiCoachScreen(
                     onNavigateToActiveWorkout = { sessionId ->

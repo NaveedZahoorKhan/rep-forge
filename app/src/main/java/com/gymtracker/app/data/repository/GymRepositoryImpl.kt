@@ -56,6 +56,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 @Singleton
 class GymRepositoryImpl @Inject constructor(
@@ -65,6 +67,8 @@ class GymRepositoryImpl @Inject constructor(
     private val cloudBackupService: CloudBackupService,
     private val healthSyncService: com.gymtracker.app.data.health.HealthSyncService,
 ) : GymRepository {
+    private val waterMutex = Mutex()
+    private val nutritionMutex = Mutex()
     override fun observeUserProfile(): Flow<UserProfileEntity?> = dao.observeUserProfile()
     override fun observeExercises(): Flow<List<ExerciseEntity>> = dao.observeExercises()
     override fun observeWorkouts(): Flow<List<WorkoutEntity>> = dao.observeWorkouts()
@@ -654,23 +658,83 @@ class GymRepositoryImpl @Inject constructor(
         dao.upsertNutritionLog(log)
     }
 
-    override suspend fun addMeal(meal: MealEntity) {
-        dao.upsertMeal(meal)
-        val existing = dao.getNutritionLogs().firstOrNull { it.dateEpochDay == meal.dateEpochDay }
-            ?: NutritionLogEntity(dateEpochDay = meal.dateEpochDay)
-        dao.upsertNutritionLog(
-            existing.copy(
-                calories = existing.calories + meal.calories,
-                proteinG = existing.proteinG + meal.proteinG,
-                carbsG = existing.carbsG + meal.carbsG,
-                fatG = existing.fatG + meal.fatG,
-                fiberG = existing.fiberG + meal.fiberG,
-            )
+    private suspend fun recomputeNutritionLogForDate(dateEpochDay: Long) {
+        val meals = dao.getMealsForDate(dateEpochDay)
+        val profile = dao.getUserProfile() ?: UserProfileEntity()
+        val existingLog = dao.getNutritionLogs().firstOrNull { it.dateEpochDay == dateEpochDay }
+
+        val totalCalories = meals.sumOf { it.calories }
+        val totalProtein = meals.sumOf { it.proteinG }
+        val totalCarbs = meals.sumOf { it.carbsG }
+        val totalFat = meals.sumOf { it.fatG }
+        val totalFiber = meals.sumOf { it.fiberG }
+
+        val logToSave = existingLog?.copy(
+            calories = totalCalories,
+            proteinG = totalProtein,
+            carbsG = totalCarbs,
+            fatG = totalFat,
+            fiberG = totalFiber,
+            calorieGoal = profile.calorieGoal,
+            proteinGoalG = profile.proteinGoalG,
+            carbsGoalG = profile.carbsGoalG,
+            fatGoalG = profile.fatGoalG,
+            fiberGoalG = profile.fiberGoalG,
+        ) ?: NutritionLogEntity(
+            dateEpochDay = dateEpochDay,
+            calories = totalCalories,
+            proteinG = totalProtein,
+            carbsG = totalCarbs,
+            fatG = totalFat,
+            fiberG = totalFiber,
+            calorieGoal = profile.calorieGoal,
+            proteinGoalG = profile.proteinGoalG,
+            carbsGoalG = profile.carbsGoalG,
+            fatGoalG = profile.fatGoalG,
+            fiberGoalG = profile.fiberGoalG,
         )
+
+        dao.upsertNutritionLog(logToSave)
+    }
+
+    override suspend fun addMeal(meal: MealEntity) {
+        nutritionMutex.withLock {
+            dao.upsertMeal(meal)
+            recomputeNutritionLogForDate(meal.dateEpochDay)
+        }
+    }
+
+    override suspend fun updateMeal(meal: MealEntity) {
+        nutritionMutex.withLock {
+            val oldMeal = dao.getMeal(meal.id)
+            dao.upsertMeal(meal)
+            recomputeNutritionLogForDate(meal.dateEpochDay)
+            if (oldMeal != null && oldMeal.dateEpochDay != meal.dateEpochDay) {
+                recomputeNutritionLogForDate(oldMeal.dateEpochDay)
+            }
+        }
+    }
+
+    override suspend fun deleteMeal(id: String) {
+        nutritionMutex.withLock {
+            val oldMeal = dao.getMeal(id) ?: return
+            dao.deleteMeal(id)
+            recomputeNutritionLogForDate(oldMeal.dateEpochDay)
+        }
     }
 
     override suspend fun upsertWater(water: WaterLogEntity) {
         dao.upsertWaterLog(water)
+    }
+
+    override suspend fun addWater(dateEpochDay: Long, deltaMl: Int, goalMl: Int) {
+        waterMutex.withLock {
+            val current = dao.getWaterForDate(dateEpochDay)
+                ?: WaterLogEntity(dateEpochDay = dateEpochDay, milliliters = 0, goalMl = goalMl)
+            val newMl = (current.milliliters + deltaMl).coerceAtLeast(0)
+            val updated = current.copy(milliliters = newMl, goalMl = goalMl)
+            dao.upsertWaterLog(updated)
+        }
     }
 
     override suspend fun addWeightLog(weight: WeightLogEntity) {

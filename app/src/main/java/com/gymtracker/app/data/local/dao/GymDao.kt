@@ -136,11 +136,23 @@ interface GymDao {
     @Query("SELECT * FROM meals WHERE dateEpochDay = :dateEpochDay ORDER BY loggedAt DESC")
     fun observeMeals(dateEpochDay: Long): Flow<List<MealEntity>>
 
+    @Query("SELECT * FROM meals WHERE dateEpochDay = :dateEpochDay ORDER BY loggedAt DESC")
+    suspend fun getMealsForDate(dateEpochDay: Long): List<MealEntity>
+
+    @Query("SELECT * FROM meals WHERE id = :id LIMIT 1")
+    suspend fun getMeal(id: String): MealEntity?
+
     @Query("SELECT * FROM meals ORDER BY loggedAt DESC")
     suspend fun getMeals(): List<MealEntity>
 
+    @Query("DELETE FROM meals WHERE id = :id")
+    suspend fun deleteMeal(id: String)
+
     @Query("SELECT * FROM water_logs WHERE dateEpochDay = :dateEpochDay LIMIT 1")
     fun observeWater(dateEpochDay: Long): Flow<WaterLogEntity?>
+
+    @Query("SELECT * FROM water_logs WHERE dateEpochDay = :dateEpochDay LIMIT 1")
+    suspend fun getWaterForDate(dateEpochDay: Long): WaterLogEntity?
 
     @Query("SELECT * FROM water_logs ORDER BY dateEpochDay DESC")
     suspend fun getWaterLogs(): List<WaterLogEntity>

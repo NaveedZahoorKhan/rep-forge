@@ -302,6 +302,7 @@ fun DashboardScreen(
     onOpenWorkouts: () -> Unit,
     onOpenGemini: (() -> Unit)? = null,
     onOpenHistory: (() -> Unit)? = null,
+    onOpenNutrition: (() -> Unit)? = null,
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -383,6 +384,7 @@ fun DashboardScreen(
             InAppDailyRemindersCard(
                 state = state,
                 onAddWater = viewModel::addWater,
+                onOpenNutrition = onOpenNutrition,
                 onLogWeight = viewModel::addWeight
             )
         }
@@ -965,6 +967,7 @@ fun DashboardScreen(
 fun InAppDailyRemindersCard(
     state: DashboardUiState,
     onAddWater: (Int) -> Unit,
+    onOpenNutrition: (() -> Unit)? = null,
     onLogWeight: (Double) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1070,13 +1073,19 @@ fun InAppDailyRemindersCard(
                                 tint = Color(0xFF29B6F6),
                                 modifier = Modifier.size(18.dp)
                             )
-                            Text("Water Reminder", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            Text(
+                                "Water & Nutrition",
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp,
+                                modifier = if (onOpenNutrition != null) Modifier.clickable { onOpenNutrition() } else Modifier,
+                            )
                         }
                         Text(
                             "$currentWater / $waterGoal ml",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (currentWater >= waterGoal) Color(0xFF2E7D32) else MaterialTheme.colorScheme.primary
+                            color = if (currentWater >= waterGoal) Color(0xFF2E7D32) else MaterialTheme.colorScheme.primary,
+                            modifier = if (onOpenNutrition != null) Modifier.clickable { onOpenNutrition() } else Modifier,
                         )
                     }
 
@@ -1107,6 +1116,16 @@ fun InAppDailyRemindersCard(
                             shape = RoundedCornerShape(6.dp)
                         ) {
                             Text("+500 ml", fontSize = 11.sp)
+                        }
+                        if (onOpenNutrition != null) {
+                            Button(
+                                onClick = onOpenNutrition,
+                                modifier = Modifier.weight(1.2f).height(32.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text("Nutrition", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
