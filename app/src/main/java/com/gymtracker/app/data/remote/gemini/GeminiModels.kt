@@ -55,6 +55,8 @@ data class GeminiWorkoutBuilderResult(
     val machineDescription: String = "",
     val healthSafetyCues: List<String> = emptyList(),
     val options: List<GeminiWorkoutOption> = emptyList(),
+    val isFallback: Boolean = false,
+    val fallbackReason: String? = null,
 )
 
 @Serializable
