@@ -36,7 +36,9 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -258,7 +260,11 @@ class ProfileViewModel @Inject constructor(
         }
     }
 
-    fun parseAndSyncRawGeminiJson(rawJson: String) {
+    fun parseAndSyncRawGeminiJson(rawJson: String, onSuccess: () -> Unit = {}) {
+        if (rawJson.isBlank()) {
+            transient = transient.copy(status = "❌ Sync failed: Gemini JSON response cannot be empty")
+            return
+        }
         viewModelScope.launch {
             try {
                 val clean = cleanJson(rawJson)
@@ -267,8 +273,9 @@ class ProfileViewModel @Inject constructor(
                     clean
                 )
                 syncGeminiToApp(payload)
+                onSuccess()
             } catch (e: Exception) {
-                transient = transient.copy(status = "Could not parse JSON: ${e.message}")
+                transient = transient.copy(status = "❌ Sync failed: Could not parse JSON (${e.message})")
             }
         }
     }
@@ -336,17 +343,41 @@ class ProfileViewModel @Inject constructor(
         }
     }
 
+    fun copyDataToClipboard(context: Context) {
+        viewModelScope.launch {
+            runCatching {
+                val dataJson = repository.exportJson()
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                val clip = ClipData.newPlainText("GymTracker Export Data", dataJson)
+                clipboard.setPrimaryClip(clip)
+            }.onSuccess {
+                transient = transient.copy(status = "✅ GymTracker JSON export copied to clipboard!")
+            }.onFailure { e ->
+                transient = transient.copy(status = "❌ Failed to copy data: ${e.message ?: "Unknown error"}")
+            }
+        }
+    }
+
     fun exportCsv() {
         viewModelScope.launch {
             transient = transient.copy(shareUri = repository.exportCsvFile(), shareMime = "text/csv", status = "CSV export ready")
         }
     }
 
-    fun importJson(jsonText: String) {
+    fun importJson(jsonText: String, onSuccess: () -> Unit = {}) {
+        if (jsonText.isBlank()) {
+            transient = transient.copy(status = "❌ Import failed: JSON backup text cannot be empty")
+            return
+        }
         viewModelScope.launch {
             runCatching { repository.importJson(jsonText) }
-                .onSuccess { transient = transient.copy(status = "Import complete") }
-                .onFailure { transient = transient.copy(status = it.message ?: "Import failed") }
+                .onSuccess {
+                    transient = transient.copy(status = "✅ Backup imported successfully!")
+                    onSuccess()
+                }
+                .onFailure {
+                    transient = transient.copy(status = "❌ Import failed: ${it.message ?: "Invalid JSON payload"}")
+                }
         }
     }
 
@@ -1136,28 +1167,122 @@ private fun DataPanel(
 
     val transientState = viewModel.transient
 
+    var showDeleteConfirmation by remember { mutableStateOf(false) }
+    var showCloudRestoreConfirmation by remember { mutableStateOf(false) }
+    var showImportConfirmation by remember { mutableStateOf(false) }
+
     val presetInstructions = listOf(
         "⚡ Calorie & Water Targets" to "Calibrate my daily calorie and water goals to optimize recovery.",
         "🏋️ Routine & Volume Optimization" to "Analyze my training split and volume, suggesting workout adjustments.",
         "📊 Full Health & Training Audit" to "Comprehensive audit of weight trends, workouts, and nutrition with sync adjustments."
     )
 
+    if (showDeleteConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmation = false },
+            title = { Text("Delete All Local Data?") },
+            text = { Text("This will permanently remove all your local workout history, body measurements, nutrition logs, and custom settings, and restore factory defaults. This action cannot be undone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteConfirmation = false
+                        viewModel.deleteAllData()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete All Data")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showDeleteConfirmation = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showCloudRestoreConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showCloudRestoreConfirmation = false },
+            title = { Text("Restore Data from Cloud?") },
+            text = { Text("This will overwrite your current local workout data and profile settings with your latest cloud backup. Any unbacked-up local changes will be replaced.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showCloudRestoreConfirmation = false
+                        viewModel.cloudRestore()
+                    }
+                ) {
+                    Text("Restore Backup")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showCloudRestoreConfirmation = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showImportConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showImportConfirmation = false },
+            title = { Text("Import Backup Data?") },
+            text = { Text("Importing backup data will update and replace your current workout database with the contents of the backup JSON file. Are you sure you want to proceed?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showImportConfirmation = false
+                        viewModel.importJson(importText) {
+                            importText = ""
+                        }
+                    }
+                ) {
+                    Text("Import Backup")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showImportConfirmation = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     LazyColumn(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         // Status banner if present
         if (transientState.status.isNotBlank()) {
             item {
+                val isError = transientState.status.startsWith("❌") || transientState.status.contains("failed", ignoreCase = true) || transientState.status.contains("error", ignoreCase = true)
                 Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer,
+                    color = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer,
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
                         transientState.status,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        color = if (isError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer,
                         modifier = Modifier.padding(12.dp),
                         fontWeight = FontWeight.SemiBold,
                         style = MaterialTheme.typography.bodyMedium
                     )
+                }
+            }
+        }
+
+        // Data Privacy Disclosure Card
+        item {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("🔒 Data Privacy & Off-Device Sharing", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
+                    Text("• Copy Data & Local Export: Copies full JSON export (workout history, body metrics, nutrition logs, settings) to your clipboard or local file. Data stays on your device unless manually shared.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("• Export to Gemini AI: Transmits your workout history, body measurements, nutrition logs, and custom prompt instructions to Gemini AI for analysis.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("• Cloud Backup: Uploads an encrypted database backup to your linked Google Account storage.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -1251,10 +1376,7 @@ private fun DataPanel(
 
                         OutlinedButton(
                             onClick = {
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val clip = ClipData.newPlainText("Gemini Prompt", userGeminiInstruction)
-                                clipboard.setPrimaryClip(clip)
-                                viewModel.exportJson()
+                                viewModel.copyDataToClipboard(context)
                             },
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(10.dp)
@@ -1363,8 +1485,9 @@ private fun DataPanel(
                     Button(
                         onClick = {
                             if (pasteSyncJson.isNotBlank()) {
-                                viewModel.parseAndSyncRawGeminiJson(pasteSyncJson)
-                                pasteSyncJson = ""
+                                viewModel.parseAndSyncRawGeminiJson(pasteSyncJson) {
+                                    pasteSyncJson = ""
+                                }
                             }
                         },
                         enabled = pasteSyncJson.isNotBlank(),
@@ -1394,8 +1517,24 @@ private fun DataPanel(
                         Button(onClick = viewModel::exportCsv, modifier = Modifier.weight(1f)) { Text("Export CSV") }
                     }
                     OutlinedTextField(value = importText, onValueChange = { importText = it }, label = { Text("Import JSON Backup") }, modifier = Modifier.fillMaxWidth(), minLines = 3)
-                    Button(onClick = { viewModel.importJson(importText) }, modifier = Modifier.fillMaxWidth()) { Text("Import backup") }
-                    OutlinedButton(onClick = viewModel::deleteAllData, modifier = Modifier.fillMaxWidth()) { Text("Delete local data") }
+                    Button(
+                        onClick = {
+                            if (importText.isBlank()) {
+                                viewModel.importJson("")
+                            } else {
+                                showImportConfirmation = true
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Import JSON Backup")
+                    }
+                    OutlinedButton(
+                        onClick = { showDeleteConfirmation = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Delete Local Data")
+                    }
                 }
             }
         }
@@ -1442,7 +1581,7 @@ private fun DataPanel(
 
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                             Button(onClick = viewModel::cloudBackup, modifier = Modifier.weight(1f)) { Text("Cloud Backup") }
-                            Button(onClick = viewModel::cloudRestore, modifier = Modifier.weight(1f)) { Text("Cloud Restore") }
+                            Button(onClick = { showCloudRestoreConfirmation = true }, modifier = Modifier.weight(1f)) { Text("Cloud Restore") }
                         }
                     } else {
                         Text(
