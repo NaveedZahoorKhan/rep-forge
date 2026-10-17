@@ -79,40 +79,7 @@ class GoogleAuthService @Inject constructor(
             )
         }
 
-        if (playServicesResult.isSuccess) {
-            return@withContext playServicesResult
-        }
-
-        // Graceful fallback for Android streaming emulator or unconfigured web client OAuth
-        runCatching {
-            GoogleUser(
-                id = "google_" + kotlin.math.abs("navi.zeee@gmail.com".hashCode()),
-                email = "navi.zeee@gmail.com",
-                displayName = "Navi",
-                photoUrl = "https://lh3.googleusercontent.com/a/default-user=s96-c",
-                idToken = null,
-            )
-        }
-    }
-
-    suspend fun quickSignIn(
-        email: String = "navi.zeee@gmail.com",
-        displayName: String = "Navi",
-        photoUrl: String? = "https://lh3.googleusercontent.com/a/default-user=s96-c",
-    ): Result<GoogleUser> = withContext(Dispatchers.IO) {
-        runCatching {
-            val cleanEmail = email.trim().ifBlank { "navi.zeee@gmail.com" }
-            val cleanName = displayName.trim().ifBlank {
-                cleanEmail.substringBefore("@").replaceFirstChar { it.titlecase() }
-            }
-            GoogleUser(
-                id = "google_" + kotlin.math.abs(cleanEmail.hashCode()),
-                email = cleanEmail,
-                displayName = cleanName,
-                photoUrl = photoUrl ?: "https://lh3.googleusercontent.com/a/default-user=s96-c",
-                idToken = null,
-            )
-        }
+        playServicesResult
     }
 
     suspend fun signOut(): Result<Unit> = withContext(Dispatchers.IO) {

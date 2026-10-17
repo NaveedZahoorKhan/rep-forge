@@ -802,13 +802,12 @@ class GymRepositoryImpl @Inject constructor(
             dao.upsertUserProfile(
                 UserProfileEntity(
                     id = "me",
-                    displayName = googleDisplayName?.ifBlank { "Navi" } ?: "Navi",
+                    displayName = googleDisplayName?.ifBlank { "Athlete" } ?: "Athlete",
                     googleLinked = googleLinked,
                     googleEmail = googleEmail,
                     googleDisplayName = googleDisplayName,
                     googlePhotoUrl = googlePhotoUrl,
                     googleId = googleId,
-                    healthConnectLinked = googleLinked,
                     updatedAt = System.currentTimeMillis()
                 )
             )
@@ -816,10 +815,9 @@ class GymRepositoryImpl @Inject constructor(
             val updated = currentProfile.copy(
                 googleLinked = googleLinked,
                 googleEmail = googleEmail,
-                googleDisplayName = googleDisplayName ?: currentProfile.displayName,
-                googlePhotoUrl = googlePhotoUrl ?: currentProfile.googlePhotoUrl,
-                googleId = googleId ?: currentProfile.googleId,
-                healthConnectLinked = if (googleLinked) true else currentProfile.healthConnectLinked,
+                googleDisplayName = googleDisplayName,
+                googlePhotoUrl = googlePhotoUrl,
+                googleId = googleId,
                 updatedAt = System.currentTimeMillis()
             )
             dao.upsertUserProfile(updated)

@@ -53,7 +53,6 @@ import com.gymtracker.app.data.local.entity.HealthSyncLogEntity
 import com.gymtracker.app.presentation.components.GoogleAccountProfileCard
 import com.gymtracker.app.presentation.components.GoogleLogoIcon
 import com.gymtracker.app.presentation.components.GoogleSignInButton
-import com.gymtracker.app.presentation.components.GoogleSignInOptionsDialog
 import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material.icons.filled.WorkspacePremium
@@ -250,37 +249,12 @@ class ProgressViewModel @Inject constructor(
                         googlePhotoUrl = user.photoUrl,
                         googleId = user.id,
                     )
-                    _syncStepMessage.value = "Signed in as ${user.email}. Syncing progress..."
-                    syncProgressToHealth()
+                    _isSyncingHealth.value = false
+                    _syncStepMessage.value = "Signed in as ${user.email}."
                 },
                 onFailure = { error ->
                     _isSyncingHealth.value = false
-                    _syncStepMessage.value = error.message ?: "Sign-in failed"
-                }
-            )
-        }
-    }
-
-    fun quickGoogleSignIn(email: String, displayName: String) {
-        viewModelScope.launch {
-            _isSyncingHealth.value = true
-            _syncStepMessage.value = "Linking Google Account ($email)..."
-            val result = googleAuthService.quickSignIn(email, displayName)
-            result.fold(
-                onSuccess = { user ->
-                    repository.updateUserGoogleAuth(
-                        googleLinked = true,
-                        googleEmail = user.email,
-                        googleDisplayName = user.displayName,
-                        googlePhotoUrl = user.photoUrl,
-                        googleId = user.id,
-                    )
-                    _syncStepMessage.value = "Connected as ${user.email}!"
-                    syncProgressToHealth()
-                },
-                onFailure = { error ->
-                    _isSyncingHealth.value = false
-                    _syncStepMessage.value = error.message ?: "Quick sign-in failed"
+                    _syncStepMessage.value = "Google sign-in failed: ${error.message ?: "Please check Google Play Services and try again."}"
                 }
             )
         }
@@ -296,7 +270,6 @@ class ProgressViewModel @Inject constructor(
                 googlePhotoUrl = null,
                 googleId = null,
             )
-            repository.updateHealthConnectStatus(linked = false)
             _syncStepMessage.value = "Google Account unlinked."
         }
     }
@@ -369,7 +342,6 @@ fun ProgressScreen(viewModel: ProgressViewModel = hiltViewModel()) {
 
     var showWeightDialog by remember { mutableStateOf(false) }
     var showMeasurementDialog by remember { mutableStateOf(false) }
-    var showGoogleDialog by remember { mutableStateOf(false) }
 
     val signInLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         viewModel.handleGoogleSignInResult(result.data)
@@ -499,8 +471,7 @@ fun ProgressScreen(viewModel: ProgressViewModel = hiltViewModel()) {
                     isSyncingHealth = state.isSyncingHealth,
                     syncStepMessage = state.syncStepMessage,
                     onLogWeightClick = { showWeightDialog = true },
-                    onSignInGoogle = { showGoogleDialog = true },
-                    onQuickConnectGoogle = { showGoogleDialog = true },
+                    onSignInGoogle = { signInLauncher.launch(viewModel.getGoogleSignInIntent()) },
                     onSyncProgressToHealth = { viewModel.syncProgressToHealth() },
                     onOpenHealthLinkTab = { selectedTab = 1 },
                 )
@@ -513,8 +484,7 @@ fun ProgressScreen(viewModel: ProgressViewModel = hiltViewModel()) {
                     syncProgress = state.syncProgress,
                     syncStepMessage = state.syncStepMessage,
                     healthLogs = state.healthLogs,
-                    onSignIn = { showGoogleDialog = true },
-                    onQuickSignIn = { showGoogleDialog = true },
+                    onSignIn = { signInLauncher.launch(viewModel.getGoogleSignInIntent()) },
                     onSignOut = { viewModel.signOutGoogle() },
                     onSyncNow = { viewModel.syncProgressToHealth() },
                     onUpdatePreferences = { workouts, weights, hydration, steps ->
@@ -577,19 +547,6 @@ fun ProgressScreen(viewModel: ProgressViewModel = hiltViewModel()) {
     }
 
     // Dialog for Google Sign-In options (Play Services intent or instant test account)
-    if (showGoogleDialog) {
-        GoogleSignInOptionsDialog(
-            onDismiss = { showGoogleDialog = false },
-            onLaunchPlayServices = {
-                showGoogleDialog = false
-                signInLauncher.launch(viewModel.getGoogleSignInIntent())
-            },
-            onQuickSignIn = { email, name ->
-                showGoogleDialog = false
-                viewModel.quickGoogleSignIn(email, name)
-            }
-        )
-    }
 }
 
 // =================================================================
@@ -609,7 +566,6 @@ private fun OverviewTab(
     syncStepMessage: String?,
     onLogWeightClick: () -> Unit,
     onSignInGoogle: () -> Unit,
-    onQuickConnectGoogle: () -> Unit,
     onSyncProgressToHealth: () -> Unit,
     onOpenHealthLinkTab: () -> Unit,
 ) {
@@ -623,7 +579,6 @@ private fun OverviewTab(
                 isSyncing = isSyncingHealth,
                 syncStepMessage = syncStepMessage,
                 onSignInGoogle = onSignInGoogle,
-                onQuickConnectGoogle = onQuickConnectGoogle,
                 onSyncProgressToHealth = onSyncProgressToHealth,
                 onOpenHealthLinkTab = onOpenHealthLinkTab,
             )
@@ -748,7 +703,6 @@ private fun GoogleHealthProgressCard(
     isSyncing: Boolean,
     syncStepMessage: String?,
     onSignInGoogle: () -> Unit,
-    onQuickConnectGoogle: () -> Unit,
     onSyncProgressToHealth: () -> Unit,
     onOpenHealthLinkTab: () -> Unit,
 ) {
@@ -910,11 +864,6 @@ private fun GoogleHealthProgressCard(
                         onClick = onSignInGoogle,
                         modifier = Modifier.weight(1f)
                     )
-                    OutlinedButton(
-                        onClick = onQuickConnectGoogle
-                    ) {
-                        Text("Quick Connect")
-                    }
                 }
             }
         }
@@ -935,7 +884,6 @@ private fun HealthLinkTab(
     syncStepMessage: String?,
     healthLogs: List<HealthSyncLogEntity>,
     onSignIn: () -> Unit,
-    onQuickSignIn: () -> Unit,
     onSignOut: () -> Unit,
     onSyncNow: () -> Unit,
     onUpdatePreferences: (syncWorkouts: Boolean, syncWeights: Boolean, syncHydration: Boolean, syncSteps: Boolean) -> Unit,
@@ -973,7 +921,6 @@ private fun HealthLinkTab(
                         )
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             GoogleSignInButton(onClick = onSignIn, modifier = Modifier.weight(1f))
-                            OutlinedButton(onClick = onQuickSignIn) { Text("Quick Connect") }
                         }
                     }
                 }

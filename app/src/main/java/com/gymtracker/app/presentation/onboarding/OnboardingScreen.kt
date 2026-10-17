@@ -72,7 +72,6 @@ import com.gymtracker.app.data.auth.GoogleAuthService
 import com.gymtracker.app.presentation.components.GoogleAccountProfileCard
 import com.gymtracker.app.presentation.components.GoogleLogoIcon
 import com.gymtracker.app.presentation.components.GoogleSignInButton
-import com.gymtracker.app.presentation.components.GoogleSignInOptionsDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -165,32 +164,15 @@ class OnboardingViewModel @Inject constructor(
                         googlePhotoUrl = user.photoUrl,
                         googleId = user.id,
                     )
-                    repository.updateHealthConnectStatus(linked = true)
+                    _uiState.update { it.copy(errorMessage = null) }
                     onUserLoaded(user.displayName)
                 },
                 onFailure = { error ->
-                    _uiState.update { it.copy(errorMessage = error.message ?: "Google sign-in failed") }
-                }
-            )
-        }
-    }
-
-    fun quickGoogleSignIn(email: String, name: String, onUserLoaded: (name: String) -> Unit) {
-        viewModelScope.launch {
-            googleAuthService.quickSignIn(email, name).fold(
-                onSuccess = { user ->
-                    repository.updateUserGoogleAuth(
-                        googleLinked = true,
-                        googleEmail = user.email,
-                        googleDisplayName = user.displayName,
-                        googlePhotoUrl = user.photoUrl,
-                        googleId = user.id,
-                    )
-                    repository.updateHealthConnectStatus(linked = true)
-                    onUserLoaded(user.displayName)
-                },
-                onFailure = { error ->
-                    _uiState.update { it.copy(errorMessage = error.message ?: "Sign-in failed") }
+                    _uiState.update {
+                        it.copy(
+                            errorMessage = "Google sign-in failed: ${error.message ?: "Please check Google Play Services and try again."}"
+                        )
+                    }
                 }
             )
         }
@@ -374,8 +356,6 @@ fun OnboardingScreen(
     val storedProfile by viewModel.profile.collectAsStateWithLifecycle()
     val equipments by viewModel.equipments.collectAsStateWithLifecycle()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-
-    var showGoogleDialog by remember { mutableStateOf(false) }
 
     // Step 1 Profile & Preferences state
     // Default gender set explicitly to MALE as requested
@@ -623,8 +603,7 @@ fun OnboardingScreen(
                     onAutoCalculateCalories = { calories = computeCalories().toString() },
                     isGoogleLinked = storedProfile?.googleLinked == true,
                     googleEmail = storedProfile?.googleEmail,
-                    onSignInGoogle = { showGoogleDialog = true },
-                    onQuickConnectGoogle = { showGoogleDialog = true },
+                    onSignInGoogle = { signInLauncher.launch(viewModel.getGoogleSignInIntent()) },
                     isNextEnabled = isStepOneValid,
                     onNext = { viewModel.setStep(1) },
                 )
@@ -705,21 +684,6 @@ fun OnboardingScreen(
         }
     }
 
-    if (showGoogleDialog) {
-        GoogleSignInOptionsDialog(
-            onDismiss = { showGoogleDialog = false },
-            onLaunchPlayServices = {
-                showGoogleDialog = false
-                signInLauncher.launch(viewModel.getGoogleSignInIntent())
-            },
-            onQuickSignIn = { email, displayName ->
-                showGoogleDialog = false
-                viewModel.quickGoogleSignIn(email, displayName) { loadedName ->
-                    name = loadedName
-                }
-            }
-        )
-    }
 }
 
 // -------------------------------------------------------------
@@ -753,7 +717,6 @@ private fun StepOnePreferences(
     isGoogleLinked: Boolean = false,
     googleEmail: String? = null,
     onSignInGoogle: () -> Unit = {},
-    onQuickConnectGoogle: () -> Unit = {},
     isNextEnabled: Boolean = true,
     onNext: () -> Unit,
 ) {
@@ -800,7 +763,6 @@ private fun StepOnePreferences(
                     if (!isGoogleLinked) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                             GoogleSignInButton(onClick = onSignInGoogle, modifier = Modifier.weight(1f))
-                            OutlinedButton(onClick = onQuickConnectGoogle) { Text("Quick Connect") }
                         }
                     }
                 }
