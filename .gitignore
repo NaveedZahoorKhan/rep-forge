@@ -1,2 +1,8 @@
 .gradle/
 .env
+build/
+app/build/
+**/build/
+*.ap_
+*.apk
+*.dex
