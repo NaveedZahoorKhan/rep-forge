@@ -28,7 +28,9 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.MonitorWeight
 import androidx.compose.material.icons.filled.TrendingDown
 import androidx.compose.material.icons.filled.TrendingUp
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -38,6 +40,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
@@ -80,6 +83,7 @@ fun WeightLogChartCard(
     var showAddForm by remember { mutableStateOf(false) }
     var inputWeightStr by remember { mutableStateOf("") }
     var showHistoryList by remember { mutableStateOf(false) }
+    var pendingDelete by remember { mutableStateOf<WeightLogEntity?>(null) }
 
     val now = System.currentTimeMillis()
     val dayMs = 24L * 60 * 60 * 1000
@@ -498,12 +502,12 @@ fun WeightLogChartCard(
                                         Text(dateStr, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     if (onDeleteWeight != null) {
-                                        IconButton(onClick = { onDeleteWeight(item.id) }, modifier = Modifier.size(28.dp)) {
+                                        IconButton(onClick = { pendingDelete = item }, modifier = Modifier.size(48.dp)) {
                                             Icon(
                                                 Icons.Default.Delete,
                                                 contentDescription = "Delete weight log",
                                                 tint = MaterialTheme.colorScheme.error,
-                                                modifier = Modifier.size(16.dp)
+                                                modifier = Modifier.size(20.dp)
                                             )
                                         }
                                     }
@@ -514,5 +518,32 @@ fun WeightLogChartCard(
                 }
             }
         }
+    }
+
+    val itemToDelete = pendingDelete
+    if (itemToDelete != null && onDeleteWeight != null) {
+        val weight = String.format(Locale.getDefault(), "%.1f %s", itemToDelete.weightKg * multiplier, unitLabel)
+        val date = SimpleDateFormat("MMM dd, yyyy • hh:mm a", Locale.getDefault()).format(Date(itemToDelete.loggedAt))
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Delete weight entry?") },
+            text = { Text("Delete the $weight entry from $date? This cannot be undone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteWeight(itemToDelete.id)
+                        pendingDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 }
