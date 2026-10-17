@@ -71,7 +71,9 @@ class WorkoutHistoryViewModel @Inject constructor(
     val rawSummaries: StateFlow<List<WorkoutSessionSummary>> = repository.observeCompletedSessionSummaries()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val exerciseVolumePoints: StateFlow<List<ExerciseVolumePoint>> = _selectedExerciseId
+    val exerciseVolumePoints: StateFlow<List<ExerciseVolumePoint>> = combine(_selectedExerciseId, exercises) { selectedId, exList ->
+        selectedId ?: exList.firstOrNull()?.id
+    }
         .flatMapLatest { id ->
             if (id.isNullOrBlank()) flowOf(emptyList())
             else repository.observeExerciseVolumeOverTime(id)
