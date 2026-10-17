@@ -173,6 +173,123 @@ class ActiveWorkoutTimerTest {
         assertTrue(viewModel.isTimerRunning)
     }
 
+    @Test
+    fun `completing unlogged set starts rest timer`() = runTest(testDispatcher) {
+        val completedSetReturn = PerformedSetEntity(
+            id = "set1",
+            sessionId = "s1",
+            exerciseId = "ex1",
+            exerciseName = "Bench Press",
+            setNumber = 1,
+            reps = 10,
+            weight = 100.0,
+            completed = true,
+            restSeconds = 60
+        )
+        val dummyRepo = Proxy.newProxyInstance(
+            GymRepository::class.java.classLoader,
+            arrayOf(GymRepository::class.java)
+        ) { _, method, args ->
+            when (method.name) {
+                "observeUserProfile" -> flowOf(UserProfileEntity(displayName = "Athlete", soundEnabled = false, vibrationEnabled = false))
+                "observeActiveSession" -> flowOf(null)
+                "observeSessionSets" -> flowOf(emptyList<PerformedSetEntity>())
+                "completeSet" -> completedSetReturn
+                else -> null
+            }
+        } as GymRepository
+
+        val helperInstance = object : NotificationHelper {
+            override fun ensureChannels() {}
+            override fun showRestComplete(exerciseName: String, sound: Boolean, vibration: Boolean) {}
+            override fun showWorkoutReminder(title: String, body: String) {}
+        }
+
+        val soundPlayerInstance = object : com.gymtracker.app.notification.WorkoutSoundPlayer {
+            override fun playRestCompleteSound() {}
+            override fun vibrateRestComplete() {}
+        }
+
+        val vm = ActiveWorkoutViewModel(dummyRepo, helperInstance, soundPlayerInstance)
+
+        val uncompletedSet = PerformedSetEntity(
+            id = "set1",
+            sessionId = "s1",
+            exerciseId = "ex1",
+            exerciseName = "Bench Press",
+            setNumber = 1,
+            reps = 10,
+            weight = 100.0,
+            completed = false,
+        )
+
+        vm.complete(uncompletedSet, 10, 100.0)
+        runCurrent()
+
+        assertTrue(vm.isTimerRunning)
+        assertEquals(60, vm.restRemaining)
+        assertEquals("Bench Press", vm.timerExercise)
+    }
+
+    @Test
+    fun `correcting completed set updates without restarting rest timer`() = runTest(testDispatcher) {
+        val completedSetReturn = PerformedSetEntity(
+            id = "set1",
+            sessionId = "s1",
+            exerciseId = "ex1",
+            exerciseName = "Bench Press",
+            setNumber = 1,
+            reps = 12,
+            weight = 100.0,
+            completed = true,
+            restSeconds = 60
+        )
+        val dummyRepo = Proxy.newProxyInstance(
+            GymRepository::class.java.classLoader,
+            arrayOf(GymRepository::class.java)
+        ) { _, method, args ->
+            when (method.name) {
+                "observeUserProfile" -> flowOf(UserProfileEntity(displayName = "Athlete", soundEnabled = false, vibrationEnabled = false))
+                "observeActiveSession" -> flowOf(null)
+                "observeSessionSets" -> flowOf(emptyList<PerformedSetEntity>())
+                "completeSet" -> completedSetReturn
+                else -> null
+            }
+        } as GymRepository
+
+        val helperInstance = object : NotificationHelper {
+            override fun ensureChannels() {}
+            override fun showRestComplete(exerciseName: String, sound: Boolean, vibration: Boolean) {}
+            override fun showWorkoutReminder(title: String, body: String) {}
+        }
+
+        val soundPlayerInstance = object : com.gymtracker.app.notification.WorkoutSoundPlayer {
+            override fun playRestCompleteSound() {}
+            override fun vibrateRestComplete() {}
+        }
+
+        val vm = ActiveWorkoutViewModel(dummyRepo, helperInstance, soundPlayerInstance)
+
+        val alreadyCompletedSet = PerformedSetEntity(
+            id = "set1",
+            sessionId = "s1",
+            exerciseId = "ex1",
+            exerciseName = "Bench Press",
+            setNumber = 1,
+            reps = 10,
+            weight = 100.0,
+            completed = true,
+        )
+
+        assertFalse(vm.isTimerRunning)
+
+        vm.complete(alreadyCompletedSet, 12, 100.0)
+        runCurrent()
+
+        assertFalse(vm.isTimerRunning)
+        assertEquals(0, vm.restRemaining)
+    }
+
     private fun createViewModel(): Pair<ActiveWorkoutViewModel, GymRepository> {
         val dummyRepo = Proxy.newProxyInstance(
             GymRepository::class.java.classLoader,
