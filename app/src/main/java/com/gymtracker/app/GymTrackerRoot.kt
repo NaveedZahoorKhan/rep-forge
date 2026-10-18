@@ -172,7 +172,7 @@ private fun GymTrackerNav(profile: UserProfileEntity) {
                     }
                 )
             }
-            composable<NutritionRoute> { NutritionScreen() }
+            composable<NutritionRoute> { NutritionScreen(onNavigateBack = { navController.popBackStack() }) }
             composable<GeminiCoachRoute> {
                 GeminiCoachScreen(
                     onNavigateToActiveWorkout = { sessionId ->

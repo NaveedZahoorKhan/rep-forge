@@ -174,6 +174,8 @@ data class MealEntity(
     val carbsG: Double,
     val fatG: Double,
     val fiberG: Double = 0.0,
+    val serving: String = "1 serving",
+    val mealCategory: String = "Snacks",
     val loggedAt: Long = System.currentTimeMillis(),
 )
 
