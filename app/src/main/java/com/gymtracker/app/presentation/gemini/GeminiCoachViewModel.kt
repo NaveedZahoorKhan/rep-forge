@@ -27,6 +27,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -71,6 +73,9 @@ class GeminiCoachViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(GeminiCoachUiState())
     val uiState: StateFlow<GeminiCoachUiState> = _uiState.asStateFlow()
+
+    private var builderJob: Job? = null
+    private var syncJob: Job? = null
 
     init {
         _uiState.update { it.copy(isLiveApi = geminiApiClient.isLiveApiConfigured()) }
@@ -164,7 +169,8 @@ class GeminiCoachViewModel @Inject constructor(
     }
 
     fun generateCustomWorkout() {
-        viewModelScope.launch {
+        builderJob?.cancel()
+        builderJob = viewModelScope.launch {
             _uiState.update { it.copy(isBuildingWorkout = true, errorMessage = null, statusMessage = null) }
             try {
                 val currentHealth = _uiState.value.healthProfile
@@ -224,7 +230,19 @@ class GeminiCoachViewModel @Inject constructor(
                         errorMessage = "Error building workout: ${e.message ?: "Unknown error"}"
                     )
                 }
+            } catch (e: CancellationException) {
+                _uiState.update {
+                    it.copy(isBuildingWorkout = false, statusMessage = "Workout generation cancelled.")
+                }
+                throw e
             }
+        }
+    }
+
+    fun cancelWorkoutGeneration() {
+        builderJob?.cancel()
+        _uiState.update {
+            it.copy(isBuildingWorkout = false, statusMessage = "Workout generation cancelled.")
         }
     }
 
@@ -257,7 +275,8 @@ class GeminiCoachViewModel @Inject constructor(
     }
 
     fun syncDailyProgressWithGemini() {
-        viewModelScope.launch {
+        syncJob?.cancel()
+        syncJob = viewModelScope.launch {
             _uiState.update { it.copy(isSyncing = true, errorMessage = null, statusMessage = null) }
             try {
                 val todayEpoch = LocalDate.now().toEpochDay()
@@ -323,7 +342,19 @@ class GeminiCoachViewModel @Inject constructor(
                         errorMessage = "Failed to sync progress with Gemini: ${e.message ?: "Unknown error"}",
                     )
                 }
+            } catch (e: CancellationException) {
+                _uiState.update {
+                    it.copy(isSyncing = false, statusMessage = "Progress sync cancelled.")
+                }
+                throw e
             }
+        }
+    }
+
+    fun cancelProgressSync() {
+        syncJob?.cancel()
+        _uiState.update {
+            it.copy(isSyncing = false, statusMessage = "Progress sync cancelled.")
         }
     }
 
