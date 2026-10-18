@@ -150,7 +150,10 @@ class GymRepositoryImpl @Inject constructor(
     }
 
     override suspend fun logPastWorkout(draft: PastWorkoutLogDraft): String {
-        val sessionId = UUID.randomUUID().toString()
+        val sessionId = draft.id ?: UUID.randomUUID().toString()
+        if (draft.id != null) {
+            deleteWorkoutSession(draft.id)
+        }
         val totalVolume = draft.exercises.sumOf { ex ->
             ex.sets.sumOf { it.weightKg * it.reps }
         }
@@ -223,11 +226,11 @@ class GymRepositoryImpl @Inject constructor(
 
     private fun mapToSummary(session: WorkoutSessionEntity, completedSets: List<PerformedSetEntity>): WorkoutSessionSummary {
         val completedAt = session.endedAt ?: session.startedAt
-        val durationMins = (session.durationSeconds / 60).coerceAtLeast(1)
-        val durationFormatted = if (durationMins >= 60) {
-            "${durationMins / 60}h ${durationMins % 60}m"
-        } else {
-            "${durationMins}m"
+        val durationMins = (session.durationSeconds / 60)
+        val durationFormatted = when {
+            session.durationSeconds <= 0 -> "Not recorded"
+            durationMins >= 60 -> "${durationMins / 60}h ${durationMins % 60}m"
+            else -> "${durationMins.coerceAtLeast(1)}m"
         }
         val exerciseSummaries = completedSets
             .groupBy { it.exerciseId to it.exerciseName }
@@ -243,8 +246,14 @@ class GymRepositoryImpl @Inject constructor(
                         reps = s.reps,
                         volumeKg = s.weight * s.reps,
                         isPr = s.isPr,
+                        targetReps = if (s.templateSetId != null) "Target set" else null,
+                        targetWeightKg = if (s.templateSetId != null) s.weight else null,
                     )
                 }
+                val targetSummary = if (session.workoutId != "manual_history") {
+                    "Template Goal: ${sets.size} sets target"
+                } else null
+
                 ExerciseVolumeSummary(
                     exerciseId = exId,
                     exerciseName = exName,
@@ -253,6 +262,7 @@ class GymRepositoryImpl @Inject constructor(
                     maxWeightKg = maxWt,
                     totalVolumeKg = totalVol,
                     setsDetail = setDetails,
+                    targetSummary = targetSummary,
                 )
             }
         val totalVolume = if (session.totalVolume > 0.0) session.totalVolume else completedSets.sumOf { it.weight * it.reps }

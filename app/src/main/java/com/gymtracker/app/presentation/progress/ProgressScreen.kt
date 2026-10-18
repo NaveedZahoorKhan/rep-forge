@@ -114,6 +114,7 @@ import com.gymtracker.app.presentation.components.EmptyState
 import com.gymtracker.app.presentation.components.LineChartCard
 import com.gymtracker.app.presentation.components.MultiLineChartCard
 import com.gymtracker.app.presentation.components.StreakHeatmap
+import com.gymtracker.app.presentation.history.WorkoutHistoryScreen
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
@@ -397,7 +398,7 @@ fun ProgressScreen(viewModel: ProgressViewModel = hiltViewModel()) {
     val context = LocalContext.current
 
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Overview", "Health Link", "Strength & 1RM", "Body & Weight", "Photos")
+    val tabs = listOf("History", "Overview", "Health Link", "Strength & 1RM", "Body & Weight", "Photos")
 
     var showWeightDialog by remember { mutableStateOf(false) }
     var showMeasurementDialog by remember { mutableStateOf(false) }
@@ -518,7 +519,8 @@ fun ProgressScreen(viewModel: ProgressViewModel = hiltViewModel()) {
         // Tab Content
         Box(modifier = Modifier.weight(1f)) {
             when (selectedTab) {
-                0 -> OverviewTab(
+                0 -> WorkoutHistoryScreen(onNavigateBack = null)
+                1 -> OverviewTab(
                     workoutDays = workoutDays,
                     activeDays = activeDaysLast6Weeks,
                     records = state.records,
@@ -535,9 +537,9 @@ fun ProgressScreen(viewModel: ProgressViewModel = hiltViewModel()) {
                     onDeleteWeight = viewModel::deleteWeightLog,
                     onSignInGoogle = { signInLauncher.launch(viewModel.getGoogleSignInIntent()) },
                     onSyncProgressToHealth = { viewModel.syncProgressToHealth() },
-                    onOpenHealthLinkTab = { selectedTab = 1 },
+                    onOpenHealthLinkTab = { selectedTab = 2 },
                 )
-                1 -> HealthLinkTab(
+                2 -> HealthLinkTab(
                     profile = state.profile,
                     workoutsCount = state.history.size,
                     weightsCount = state.weights.size,
@@ -556,13 +558,13 @@ fun ProgressScreen(viewModel: ProgressViewModel = hiltViewModel()) {
                     },
                     onOpenSystemHealthConnect = { viewModel.openHealthConnectSettings(context) },
                 )
-                2 -> StrengthTab(
+                3 -> StrengthTab(
                     exercises = state.exercises,
                     selectedExerciseId = viewModel.selectedExerciseId,
                     onSelectExercise = viewModel::selectExercise,
                     progressPoints = viewModel.progressPoints
                 )
-                3 -> BodyAndWeightTab(
+                4 -> BodyAndWeightTab(
                     weights = state.weights,
                     measurements = state.measurements,
                     unitSystem = state.profile.unitSystem,
@@ -570,7 +572,7 @@ fun ProgressScreen(viewModel: ProgressViewModel = hiltViewModel()) {
                     onDeleteWeight = viewModel::deleteWeightLog,
                     onLogMeasurementClick = { showMeasurementDialog = true }
                 )
-                4 -> PhotosTab(
+                5 -> PhotosTab(
                     photos = state.photos,
                     onAddPhoto = { photoPicker.launch("image/*") },
                     onDeletePhoto = viewModel::deletePhoto,
