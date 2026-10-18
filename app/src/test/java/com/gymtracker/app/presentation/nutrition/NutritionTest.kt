@@ -126,6 +126,7 @@ class NutritionTest {
         override fun observeWorkoutExercises(workoutId: String) = flowOf(emptyList<com.gymtracker.app.data.local.entity.WorkoutExerciseEntity>())
         override fun observeAllWorkoutExercises() = flowOf(emptyList<com.gymtracker.app.data.local.entity.WorkoutExerciseEntity>())
         override suspend fun getAllWorkoutExercises() = emptyList<com.gymtracker.app.data.local.entity.WorkoutExerciseEntity>()
+        override fun observeAllSetTemplates() = flowOf(emptyList<com.gymtracker.app.data.local.entity.SetTemplateEntity>())
         override fun observeActiveSession() = flowOf(null)
         override fun observeSessionSets(sessionId: String) = flowOf(emptyList<com.gymtracker.app.data.local.entity.PerformedSetEntity>())
         override fun observeHistory() = flowOf(emptyList<com.gymtracker.app.data.local.entity.WorkoutSessionEntity>())

@@ -140,6 +140,7 @@ private class FakeGymDao : GymDao {
     override suspend fun getAllWorkoutExercises(): List<WorkoutExerciseEntity> = emptyList()
     override suspend fun getSetTemplates(workoutExerciseIds: List<String>): List<SetTemplateEntity> = emptyList()
     override fun observeSetTemplates(workoutExerciseId: String): Flow<List<SetTemplateEntity>> = MutableStateFlow(emptyList())
+    override fun observeAllSetTemplates(): Flow<List<SetTemplateEntity>> = MutableStateFlow(emptyList())
     override fun observeSessionByStatus(status: SessionStatus): Flow<WorkoutSessionEntity?> = MutableStateFlow(null)
     override suspend fun getSession(id: String): WorkoutSessionEntity? = null
     override fun observeHistory(): Flow<List<WorkoutSessionEntity>> = MutableStateFlow(emptyList())

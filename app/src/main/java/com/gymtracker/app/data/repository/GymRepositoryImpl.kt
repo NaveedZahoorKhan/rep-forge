@@ -76,6 +76,7 @@ class GymRepositoryImpl @Inject constructor(
     override fun observeWorkoutExercises(workoutId: String): Flow<List<WorkoutExerciseEntity>> = dao.observeWorkoutExercises(workoutId)
     override fun observeAllWorkoutExercises(): Flow<List<WorkoutExerciseEntity>> = dao.observeAllWorkoutExercises()
     override suspend fun getAllWorkoutExercises(): List<WorkoutExerciseEntity> = dao.getAllWorkoutExercises()
+    override fun observeAllSetTemplates(): Flow<List<SetTemplateEntity>> = dao.observeAllSetTemplates()
     override fun observeActiveSession(): Flow<WorkoutSessionEntity?> = dao.observeSessionByStatus(SessionStatus.ACTIVE)
     override fun observeSessionSets(sessionId: String): Flow<List<PerformedSetEntity>> = dao.observeSessionSets(sessionId)
     override fun observeHistory(): Flow<List<WorkoutSessionEntity>> = dao.observeHistory()
