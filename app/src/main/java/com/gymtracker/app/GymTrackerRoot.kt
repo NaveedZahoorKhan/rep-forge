@@ -161,7 +161,17 @@ private fun GymTrackerNav(profile: UserProfileEntity) {
                 )
             }
             composable<ProgressRoute> { ProgressScreen() }
-            composable<ProfileRoute> { ProfileScreen() }
+            composable<ProfileRoute> {
+                ProfileScreen(
+                    onOpenNutrition = {
+                        navController.navigate(NutritionRoute) {
+                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    }
+                )
+            }
             composable<NutritionRoute> { NutritionScreen() }
             composable<GeminiCoachRoute> {
                 GeminiCoachScreen(

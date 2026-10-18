@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -50,6 +51,7 @@ class ProfileViewModelTest {
             return if (name == Context.CLIPBOARD_SERVICE) clipboard else null
         }
         override fun getApplicationContext(): Context = this
+        override fun getPackageName(): String = "com.gymtracker.app"
     }
 
     private fun createMockRepository(
@@ -305,6 +307,43 @@ class ProfileViewModelTest {
         viewModel.restoreEquipment(item)
         runCurrent()
         assertEquals("Restored Incline Bench", viewModel.transient.status)
+    }
+
+    @Test
+    fun `updateSection updates currentSection in state`() = runTest(testDispatcher) {
+        val repo = createMockRepository()
+        val viewModel = createViewModel(repo)
+        val job = backgroundScope.launch { viewModel.state.collect {} }
+        runCurrent()
+
+        assertEquals(ProfileSection.MAIN, viewModel.state.value.currentSection)
+
+        viewModel.updateSection(ProfileSection.EQUIPMENT)
+        runCurrent()
+        assertEquals(ProfileSection.EQUIPMENT, viewModel.state.value.currentSection)
+
+        viewModel.updateSection(ProfileSection.CONNECTIONS)
+        runCurrent()
+        assertEquals(ProfileSection.CONNECTIONS, viewModel.state.value.currentSection)
+        job.cancel()
+    }
+
+    @Test
+    fun `setEquipmentSearchQuery and filters update state`() = runTest(testDispatcher) {
+        val repo = createMockRepository()
+        val viewModel = createViewModel(repo)
+        val job = backgroundScope.launch { viewModel.state.collect {} }
+        runCurrent()
+
+        viewModel.setEquipmentSearchQuery("cable")
+        viewModel.setEquipmentLocationFilter("Gym")
+        viewModel.setEquipmentCategoryFilter("Cable")
+        runCurrent()
+
+        assertEquals("cable", viewModel.state.value.equipmentSearchQuery)
+        assertEquals("Gym", viewModel.state.value.equipmentLocationFilter)
+        assertEquals("Cable", viewModel.state.value.equipmentCategoryFilter)
+        job.cancel()
     }
 }
 
