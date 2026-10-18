@@ -1,15 +1,23 @@
 package com.gymtracker.app
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Analytics
-import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.FitnessCenter
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -18,6 +26,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -31,10 +41,13 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.gymtracker.app.data.local.entity.ThemeMode
 import com.gymtracker.app.data.local.entity.UserProfileEntity
+import com.gymtracker.app.data.local.entity.WorkoutSessionEntity
 import com.gymtracker.app.domain.repository.GymRepository
 import com.gymtracker.app.presentation.active.ActiveWorkoutRouteScreen
+import com.gymtracker.app.presentation.components.PrimaryButton
 import com.gymtracker.app.presentation.dashboard.DashboardScreen
 import com.gymtracker.app.presentation.gemini.GeminiCoachScreen
+import com.gymtracker.app.presentation.history.WorkoutHistoryScreen
 import com.gymtracker.app.presentation.navigation.ActiveWorkoutRoute
 import com.gymtracker.app.presentation.navigation.DashboardRoute
 import com.gymtracker.app.presentation.navigation.GeminiCoachRoute
@@ -48,9 +61,9 @@ import com.gymtracker.app.presentation.nutrition.NutritionScreen
 import com.gymtracker.app.presentation.onboarding.OnboardingScreen
 import com.gymtracker.app.presentation.profile.ProfileScreen
 import com.gymtracker.app.presentation.progress.ProgressScreen
+import com.gymtracker.app.presentation.theme.AppSpacing
 import com.gymtracker.app.presentation.theme.GymTrackerTheme
 import com.gymtracker.app.presentation.workouts.WorkoutsScreen
-import com.gymtracker.app.presentation.history.WorkoutHistoryScreen
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
@@ -65,6 +78,9 @@ class AppViewModel @Inject constructor(
     val profile: StateFlow<UserProfileEntity?> = repository.observeUserProfile()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    val activeSession: StateFlow<WorkoutSessionEntity?> = repository.observeActiveSession()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     init {
         viewModelScope.launch {
             runCatching { repository.seedInitialData() }
@@ -76,41 +92,59 @@ class AppViewModel @Inject constructor(
 @Composable
 fun GymTrackerRoot(viewModel: AppViewModel = hiltViewModel()) {
     val profile by viewModel.profile.collectAsStateWithLifecycle()
+    val activeSession by viewModel.activeSession.collectAsStateWithLifecycle()
+
     GymTrackerTheme(themeMode = profile?.themeMode ?: ThemeMode.SYSTEM) {
         val loadedProfile = profile
         if (loadedProfile == null) {
             Box(contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         } else {
-            GymTrackerNav(profile = loadedProfile)
+            GymTrackerNav(profile = loadedProfile, activeSession = activeSession)
         }
     }
 }
 
 @Composable
-private fun GymTrackerNav(profile: UserProfileEntity) {
+private fun GymTrackerNav(
+    profile: UserProfileEntity,
+    activeSession: WorkoutSessionEntity?,
+) {
     val navController = rememberNavController()
     val startDestination = if (profile.onboardingComplete) DashboardRoute else OnboardingRoute
     val backStackEntry by navController.currentBackStackEntryAsState()
     val destination = backStackEntry?.destination
     val showBottomBar = destination.shouldShowBottomBar()
+    val isLoggingScreen = destination?.route?.contains("ActiveWorkoutRoute") == true
 
     Scaffold(
         bottomBar = {
-            if (showBottomBar) {
-                NavigationBar {
-                    bottomItems.forEach { item ->
-                        NavigationBarItem(
-                            selected = destination?.route?.contains(item.routeName) == true,
-                            onClick = {
-                                navController.navigate(item.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
-                            icon = { Icon(item.icon, contentDescription = item.label) },
-                            label = { Text(item.label) },
-                        )
+            Column {
+                if (activeSession != null && !isLoggingScreen) {
+                    ActiveSessionResumeBar(
+                        session = activeSession,
+                        onResume = {
+                            navController.navigate(ActiveWorkoutRoute(sessionId = activeSession.id)) {
+                                launchSingleTop = true
+                            }
+                        },
+                    )
+                }
+                if (showBottomBar) {
+                    NavigationBar {
+                        bottomItems.forEach { item ->
+                            NavigationBarItem(
+                                selected = destination?.route?.contains(item.routeName) == true,
+                                onClick = {
+                                    navController.navigate(item.route) {
+                                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
+                                },
+                                icon = { Icon(item.icon, contentDescription = item.label) },
+                                label = { Text(item.label) },
+                            )
+                        }
                     }
                 }
             }
@@ -181,6 +215,49 @@ private fun GymTrackerNav(profile: UserProfileEntity) {
     }
 }
 
+@Composable
+private fun ActiveSessionResumeBar(
+    session: WorkoutSessionEntity,
+    onResume: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = AppSpacing.gutter, vertical = AppSpacing.xs)
+            .clickable(onClick = onResume),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = AppSpacing.lg, vertical = AppSpacing.md),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Workout in Progress",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = session.workoutName.ifBlank { "Active Session" },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            PrimaryButton(
+                text = "Resume",
+                onClick = onResume,
+            )
+        }
+    }
+}
+
 private data class BottomItem(
     val label: String,
     val routeName: String,
@@ -189,11 +266,10 @@ private data class BottomItem(
 )
 
 private val bottomItems = listOf(
-    BottomItem("Dashboard", "DashboardRoute", DashboardRoute, Icons.Outlined.Home),
-    BottomItem("Workouts", "WorkoutsRoute", WorkoutsRoute, Icons.Outlined.FitnessCenter),
-    BottomItem("Gemini AI", "GeminiCoachRoute", GeminiCoachRoute, Icons.Outlined.AutoAwesome),
+    BottomItem("Today", "DashboardRoute", DashboardRoute, Icons.Outlined.Home),
+    BottomItem("Train", "WorkoutsRoute", WorkoutsRoute, Icons.Outlined.FitnessCenter),
     BottomItem("Progress", "ProgressRoute", ProgressRoute, Icons.Outlined.Analytics),
-    BottomItem("Profile", "ProfileRoute", ProfileRoute, Icons.Outlined.Person),
+    BottomItem("You", "ProfileRoute", ProfileRoute, Icons.Outlined.Person),
 )
 
 private fun NavDestination?.shouldShowBottomBar(): Boolean {

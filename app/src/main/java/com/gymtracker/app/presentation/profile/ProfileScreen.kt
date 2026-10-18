@@ -2,20 +2,18 @@
 
 package com.gymtracker.app.presentation.profile
 
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.TimePicker
-import androidx.compose.material3.rememberTimePickerState
-import java.util.Calendar
-
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,27 +34,32 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.Restaurant
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
-import androidx.compose.material3.TextButton
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -65,46 +68,35 @@ import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import android.content.ClipData
-import android.content.ClipboardManager
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.NotificationsActive
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material.icons.filled.WaterDrop
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
-import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
-import com.gymtracker.app.domain.usecase.NutritionCalculator
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import com.gymtracker.app.data.auth.GoogleAuthService
-import com.gymtracker.app.data.health.HealthSyncService
-import com.gymtracker.app.presentation.components.GoogleAccountProfileCard
-import com.gymtracker.app.presentation.components.GoogleLogoIcon
-import com.gymtracker.app.presentation.components.GoogleSignInButton
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -116,7 +108,9 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import coil.compose.AsyncImage
+import com.gymtracker.app.data.auth.GoogleAuthService
 import com.gymtracker.app.data.backup.CloudBackupService
+import com.gymtracker.app.data.health.HealthSyncService
 import com.gymtracker.app.data.local.entity.Gender
 import com.gymtracker.app.data.local.entity.GymEquipmentEntity
 import com.gymtracker.app.data.local.entity.ReminderEntity
@@ -125,17 +119,25 @@ import com.gymtracker.app.data.local.entity.UnitSystem
 import com.gymtracker.app.data.local.entity.UserProfileEntity
 import com.gymtracker.app.data.remote.gemini.GeminiApiClient
 import com.gymtracker.app.data.remote.gemini.GeminiExportSyncPayload
-import com.gymtracker.app.data.remote.gemini.GeminiSuggestedReminder
 import com.gymtracker.app.domain.repository.GymRepository
+import com.gymtracker.app.domain.usecase.NutritionCalculator
 import com.gymtracker.app.notification.NotificationHelper
+import com.gymtracker.app.presentation.components.DestructiveButton
+import com.gymtracker.app.presentation.components.GoogleAccountProfileCard
+import com.gymtracker.app.presentation.components.GoogleLogoIcon
+import com.gymtracker.app.presentation.components.GoogleSignInButton
+import com.gymtracker.app.presentation.components.PrimaryButton
+import com.gymtracker.app.presentation.components.SecondaryButton
 import com.gymtracker.app.presentation.components.SectionTitle
 import com.gymtracker.app.presentation.nutrition.NutritionContent
 import com.gymtracker.app.presentation.nutrition.NutritionViewModel
+import com.gymtracker.app.presentation.theme.AppSpacing
 import com.gymtracker.app.worker.WaterReminderWorker
 import com.gymtracker.app.worker.WorkoutReminderWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
+import java.util.Calendar
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -143,7 +145,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
@@ -555,17 +556,28 @@ fun ProfileScreen(
                 type = viewModel.transient.shareMime
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }, "Share GymTracker export"))
+            }, "Share Rep Forge export"))
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Profile & Settings", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(AppSpacing.gutter),
+        verticalArrangement = Arrangement.spacedBy(AppSpacing.md)
+    ) {
+        Text("You", style = MaterialTheme.typography.headlineLarge)
+
         TabRow(selectedTabIndex = tab) {
-            listOf("Settings", "Equipments", "Nutrition", "Data").forEachIndexed { index, title ->
-                Tab(selected = tab == index, onClick = { tab = index }, text = { Text(title) })
+            listOf("Account & Settings", "Equipment", "Nutrition", "Data & Privacy").forEachIndexed { index, title ->
+                Tab(
+                    selected = tab == index,
+                    onClick = { tab = index },
+                    text = { Text(title, style = MaterialTheme.typography.labelMedium) }
+                )
             }
         }
+
         Box(Modifier.weight(1f)) {
             when (tab) {
                 0 -> SettingsPanel(profile, baseState.reminders, viewModel)
@@ -582,12 +594,8 @@ fun ProfileScreen(
             }
         }
     }
-
 }
 
-// -------------------------------------------------------------
-// GYM EQUIPMENTS PANEL (SAVED TO USER'S WORKOUT PROFILE)
-// -------------------------------------------------------------
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun EquipmentsPanel(
@@ -629,21 +637,21 @@ private fun EquipmentsPanel(
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.md)
         ) {
             item {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
                 ) {
-                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.padding(AppSpacing.lg), verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                             Icon(Icons.Default.FitnessCenter, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            Text("Profile Gym Equipments (${equipments.size})", fontWeight = FontWeight.Bold)
+                            Text("Registered Equipments (${equipments.size})", style = MaterialTheme.typography.titleMedium)
                         }
                         Text(
-                            "These uploaded images and machines are saved in your workout profile. Gemini automatically caters every workout routine to your available machines.",
-                            style = MaterialTheme.typography.bodySmall,
+                            "These saved machines allow Gemini to adapt workout routines to your gear.",
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -651,48 +659,26 @@ private fun EquipmentsPanel(
             }
 
             item {
-                Button(
+                PrimaryButton(
+                    text = if (showAddForm) "Cancel" else "Add Equipment",
                     onClick = {
-                        if (showAddForm) {
-                            resetForm()
-                        } else {
-                            resetForm()
-                            showAddForm = true
-                        }
+                        if (showAddForm) resetForm() else { resetForm(); showAddForm = true }
                     },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Icon(if (showAddForm) Icons.Default.Close else Icons.Default.Add, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (showAddForm) "Cancel" else "Add Gym Machine or Equipment")
-                }
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
 
             if (showAddForm) {
                 item {
                     Card(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                     ) {
-                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(Modifier.padding(AppSpacing.lg), verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                             Text(
-                                if (editingEquipment != null) "Edit Machine / Gear" else "New Machine / Gear",
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.titleSmall
+                                if (editingEquipment != null) "Edit Machine" else "New Machine",
+                                style = MaterialTheme.typography.titleMedium
                             )
-
-                            Text("Location", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                listOf("Gym", "Home").forEach { loc ->
-                                    FilterChip(
-                                        selected = location == loc,
-                                        onClick = { location = loc },
-                                        label = { Text(if (loc == "Gym") "Commercial Gym" else "Home") },
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                }
-                            }
 
                             OutlinedTextField(
                                 value = machineName,
@@ -702,152 +688,36 @@ private fun EquipmentsPanel(
                                 singleLine = true
                             )
 
-                            Text("Category", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            val presetCategories = listOf("Machine", "Free Weight", "Cable", "Cardio", "Bodyweight", "Accessory")
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                presetCategories.forEach { cat ->
-                                    FilterChip(
-                                        selected = category.equals(cat, ignoreCase = true),
-                                        onClick = { category = cat },
-                                        label = { Text(cat) }
-                                    )
-                                }
-                            }
-
-                            OutlinedTextField(
-                                value = category,
-                                onValueChange = { category = it },
-                                label = { Text("Custom Category / Type") },
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true
-                            )
-
-                            OutlinedTextField(
-                                value = machineNotes,
-                                onValueChange = { machineNotes = it },
-                                label = { Text("Notes (seat height, attachments, resistance ratio, etc.)") },
-                                modifier = Modifier.fillMaxWidth(),
-                                minLines = 2,
-                                maxLines = 4
-                            )
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                OutlinedButton(
-                                    onClick = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(if (selectedPhotoUri != null || !existingPhotoUriStr.isNullOrBlank()) "Change Photo" else "Upload Photo")
-                                }
-
-                                if (selectedPhotoUri != null || !existingPhotoUriStr.isNullOrBlank()) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(46.dp)
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp))
-                                    ) {
-                                        AsyncImage(
-                                            model = selectedPhotoUri ?: existingPhotoUriStr,
-                                            contentDescription = null,
-                                            modifier = Modifier.fillMaxSize(),
-                                            contentScale = ContentScale.Crop
-                                        )
-                                    }
-
-                                    OutlinedButton(
-                                        onClick = {
-                                            selectedPhotoUri = null
-                                            existingPhotoUriStr = null
+                            PrimaryButton(
+                                text = if (editingEquipment != null) "Update Equipment" else "Save Equipment",
+                                onClick = {
+                                    if (machineName.isNotBlank()) {
+                                        val name = machineName
+                                        val currentEditing = editingEquipment
+                                        if (currentEditing != null) {
+                                            viewModel.updateEquipment(
+                                                id = currentEditing.id,
+                                                name = name,
+                                                category = category,
+                                                location = location,
+                                                photoUri = selectedPhotoUri,
+                                                existingPhotoUriStr = existingPhotoUriStr,
+                                                notes = machineNotes
+                                            )
+                                        } else {
+                                            viewModel.addEquipment(
+                                                name = name,
+                                                category = category,
+                                                location = location,
+                                                photoUri = selectedPhotoUri,
+                                                notes = machineNotes
+                                            )
                                         }
-                                    ) {
-                                        Text("Remove")
+                                        resetForm()
                                     }
-                                }
-                            }
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OutlinedButton(
-                                    onClick = { resetForm() },
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text("Cancel")
-                                }
-
-                                Button(
-                                    onClick = {
-                                        if (machineName.isNotBlank()) {
-                                            val name = machineName
-                                            val currentEditing = editingEquipment
-                                            if (currentEditing != null) {
-                                                viewModel.updateEquipment(
-                                                    id = currentEditing.id,
-                                                    name = name,
-                                                    category = category,
-                                                    location = location,
-                                                    photoUri = selectedPhotoUri,
-                                                    existingPhotoUriStr = existingPhotoUriStr,
-                                                    notes = machineNotes
-                                                )
-                                                coroutineScope.launch {
-                                                    snackbarHostState.showSnackbar("Updated \"$name\"")
-                                                }
-                                            } else {
-                                                viewModel.addEquipment(
-                                                    name = name,
-                                                    category = category,
-                                                    location = location,
-                                                    photoUri = selectedPhotoUri,
-                                                    notes = machineNotes
-                                                )
-                                                coroutineScope.launch {
-                                                    snackbarHostState.showSnackbar("Saved \"$name\" to profile")
-                                                }
-                                            }
-                                            resetForm()
-                                        }
-                                    },
-                                    enabled = machineName.isNotBlank(),
-                                    modifier = Modifier.weight(1.5f)
-                                ) {
-                                    Text(if (editingEquipment != null) "Update Equipment" else "Save to Profile")
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (equipments.isEmpty()) {
-                item {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(Icons.Default.FitnessCenter, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp))
-                            Text("No gym equipments registered", fontWeight = FontWeight.Bold)
-                            Text(
-                                "Tap 'Add Gym Machine or Equipment' above to upload photos and machine names for Gemini personalization.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                },
+                                enabled = machineName.isNotBlank(),
+                                modifier = Modifier.fillMaxWidth()
                             )
                         }
                     }
@@ -857,146 +727,27 @@ private fun EquipmentsPanel(
             items(equipments, key = { it.id }) { eq ->
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                 ) {
                     Row(
-                        modifier = Modifier.padding(12.dp),
+                        modifier = Modifier.padding(AppSpacing.md),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        if (!eq.photoUri.isNullOrBlank()) {
-                            AsyncImage(
-                                model = eq.photoUri,
-                                contentDescription = eq.name,
-                                modifier = Modifier
-                                    .size(56.dp)
-                                    .clip(RoundedCornerShape(8.dp)),
-                                contentScale = ContentScale.Crop
-                            )
-                        } else {
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                                modifier = Modifier.size(56.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        if (eq.location == "Home") Icons.Default.Home else Icons.Default.FitnessCenter,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
-                        }
-
                         Column(Modifier.weight(1f)) {
-                            Text(eq.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Surface(
-                                    shape = RoundedCornerShape(4.dp),
-                                    color = MaterialTheme.colorScheme.secondaryContainer,
-                                ) {
-                                    Text(
-                                        eq.location,
-                                        fontSize = 11.sp,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                        fontWeight = FontWeight.Medium,
-                                        color = MaterialTheme.colorScheme.onSecondaryContainer
-                                    )
-                                }
-                                Surface(
-                                    shape = RoundedCornerShape(4.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant,
-                                ) {
-                                    Text(
-                                        eq.category,
-                                        fontSize = 11.sp,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            if (eq.notes.isNotBlank()) {
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    eq.notes,
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
+                            Text(eq.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                            Text("${eq.location} • ${eq.category}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-
-                        IconButton(onClick = {
-                            editingEquipment = eq
-                            machineName = eq.name
-                            location = eq.location
-                            category = eq.category
-                            machineNotes = eq.notes
-                            existingPhotoUriStr = eq.photoUri
-                            selectedPhotoUri = eq.photoUri?.let { Uri.parse(it) }
-                            showAddForm = true
-                        }) {
-                            Icon(Icons.Default.Edit, contentDescription = "Edit Equipment", tint = MaterialTheme.colorScheme.primary)
-                        }
-
                         IconButton(onClick = { equipmentToDelete = eq }) {
-                            Icon(Icons.Default.Delete, contentDescription = "Delete Equipment", tint = MaterialTheme.colorScheme.error)
+                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
                         }
                     }
                 }
             }
         }
-
-        SnackbarHost(
-            hostState = snackbarHostState,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 16.dp)
-        )
-    }
-
-    if (equipmentToDelete != null) {
-        val target = equipmentToDelete!!
-        AlertDialog(
-            onDismissRequest = { equipmentToDelete = null },
-            title = { Text("Delete Equipment?") },
-            text = { Text("Are you sure you want to delete \"${target.name}\"? You can undo this action immediately after deletion.") },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val deleted = target
-                        equipmentToDelete = null
-                        viewModel.deleteEquipment(deleted.id)
-                        coroutineScope.launch {
-                            val result = snackbarHostState.showSnackbar(
-                                message = "Deleted \"${deleted.name}\"",
-                                actionLabel = "Undo",
-                                duration = SnackbarDuration.Short
-                            )
-                            if (result == SnackbarResult.ActionPerformed) {
-                                viewModel.restoreEquipment(deleted)
-                            }
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text("Delete")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { equipmentToDelete = null }) {
-                    Text("Cancel")
-                }
-            }
-        )
     }
 }
 
-// -------------------------------------------------------------
-// SETTINGS PANEL
-// -------------------------------------------------------------
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SettingsPanel(profile: UserProfileEntity, reminders: List<ReminderEntity>, viewModel: ProfileViewModel) {
@@ -1015,510 +766,64 @@ private fun SettingsPanel(profile: UserProfileEntity, reminders: List<ReminderEn
     }
 
     var split by remember(profile.preferredSplit) { mutableStateOf(profile.preferredSplit.ifBlank { "Push Pull Legs (PPL)" }) }
-    var rest by remember(profile.defaultRestSeconds) { mutableStateOf(profile.defaultRestSeconds.toString()) }
-    var calories by remember(profile.calorieGoal) { mutableStateOf(profile.calorieGoal.toString()) }
-    var water by remember(profile.waterGoalMl) { mutableStateOf(profile.waterGoalMl.toString()) }
-    var reminderTitle by remember { mutableStateOf("Workout reminder") }
 
-    var selectedHour by remember { mutableIntStateOf(18) }
-    var selectedMinute by remember { mutableIntStateOf(0) }
-    var showTimePicker by remember { mutableStateOf(false) }
-
-    var settingsFeedback by remember { mutableStateOf("") }
-    var reminderFeedback by remember { mutableStateOf("") }
-
-    val goals = listOf("Lose weight", "Build muscle", "Gain strength", "Tone & Endurance")
-
-    val availableSplits = listOf(
-        "Push Pull Legs (PPL)" to "Mon: Push • Tue: Pull • Wed: Legs • Thu: Push • Fri: Pull • Sat: Legs • Sun: Rest",
-        "PPLUL (Push Pull Legs Upper Lower)" to "Mon: Push • Tue: Pull • Wed: Legs • Thu: Rest • Fri: Upper • Sat: Lower • Sun: Rest",
-        "Upper / Lower Split" to "Mon: Upper • Tue: Lower • Wed: Rest • Thu: Upper • Fri: Lower • Sat/Sun: Rest",
-        "Bro Split (Body Part Split)" to "Mon: Chest • Tue: Back • Wed: Shoulders • Thu: Legs • Fri: Arms • Sat/Sun: Rest",
-        "Full Body Circuit" to "Mon: Full Body • Tue: Rest • Wed: Full Body • Thu: Rest • Fri: Full Body • Sat/Sun: Rest",
-    )
-
-    fun autoCalculateCalories() {
-        val rawW = weightStr.toDoubleOrNull() ?: 75.0
-        val rawH = heightStr.toDoubleOrNull() ?: 175.0
-        val wKg = if (unitSystem == UnitSystem.IMPERIAL) rawW / 2.20462262185 else rawW
-        val hCm = if (unitSystem == UnitSystem.IMPERIAL) rawH * 2.54 else rawH
-        val calculated = NutritionCalculator.autoCalculateTargetCalories(
-            weightKg = wKg,
-            heightCm = hCm,
-            gender = gender,
-            goal = goal,
-        )
-        calories = calculated.toString()
-    }
-
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(AppSpacing.lg)) {
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
             ) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionTitle("Athlete Preferences")
+                Column(Modifier.padding(AppSpacing.lg), verticalArrangement = Arrangement.spacedBy(AppSpacing.md)) {
+                    SectionTitle("Account & Preferences")
+
                     OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
 
-                    // Gender Selection (Default: Male)
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Gender (Default: Male)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Gender.entries.forEach { entry ->
-                                FilterChip(
-                                    selected = gender == entry,
-                                    onClick = { gender = entry },
-                                    label = { Text(entry.name.lowercase().replaceFirstChar { it.titlecase() }) }
-                                )
-                            }
-                        }
-                    }
-
-                    // Primary Goal Selection
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Primary Goal", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer,
-                            ) {
-                                Text(
-                                    goal,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                )
-                            }
-                        }
-                        Text(
-                            "Choose your fitness focus. Gemini calibrates target volume, nutrition, and rest to this goal.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            goals.forEach { g ->
-                                val isSelected = goal.equals(g, ignoreCase = true)
-                                FilterChip(
-                                    selected = isSelected,
-                                    onClick = {
-                                        goal = g
-                                        autoCalculateCalories()
-                                    },
-                                    label = {
-                                        Text(
-                                            g,
-                                            fontSize = 13.sp,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                                        )
-                                    },
-                                    leadingIcon = if (isSelected) {
-                                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                                    } else null,
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                        selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                                    ),
-                                    modifier = Modifier.height(40.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    // Unit System Switcher
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Unit System", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            UnitSystem.entries.forEach { unit ->
-                                FilterChip(
-                                    selected = unitSystem == unit,
-                                    onClick = {
-                                        if (unitSystem != unit) {
-                                            val currentH = heightStr.toDoubleOrNull()
-                                            val currentW = weightStr.toDoubleOrNull()
-
-                                            if (unit == UnitSystem.IMPERIAL && unitSystem == UnitSystem.METRIC) {
-                                                // cm -> inches, kg -> lbs
-                                                if (currentH != null) heightStr = String.format(java.util.Locale.US, "%.1f", currentH / 2.54)
-                                                if (currentW != null) weightStr = String.format(java.util.Locale.US, "%.1f", currentW * 2.20462262185)
-                                            } else if (unit == UnitSystem.METRIC && unitSystem == UnitSystem.IMPERIAL) {
-                                                // inches -> cm, lbs -> kg
-                                                if (currentH != null) heightStr = String.format(java.util.Locale.US, "%.1f", currentH * 2.54)
-                                                if (currentW != null) weightStr = String.format(java.util.Locale.US, "%.1f", currentW / 2.20462262185)
-                                            }
-                                            unitSystem = unit
-                                        }
-                                    },
-                                    label = { Text(if (unit == UnitSystem.METRIC) "Metric (kg/cm)" else "Imperial (lb/in)") }
-                                )
-                            }
-                        }
-                    }
-
-                    // Theme selector (Defaults to Light)
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("App Theme (Default: Light Mode)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            ThemeMode.entries.forEach {
-                                FilterChip(
-                                    selected = profile.themeMode == it,
-                                    onClick = { viewModel.save(profile.copy(themeMode = it)) },
-                                    label = { Text(it.name.lowercase().replaceFirstChar { c -> c.titlecase() }) }
-                                )
-                            }
-                        }
-                    }
-
-                    // Routine Split Selection (Single Select)
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("Workout Routine Split", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                            Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
-                                Text("Single select", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
-                            }
-                        }
-                        Text(
-                            "Select one split. Changing this automatically reorganizes your weekly schedule and dashboard workouts.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-
-                        for ((splitTitle, splitSchedule) in availableSplits) {
-                            val isSelected = split.trim().equals(splitTitle.trim(), ignoreCase = true)
-                            OutlinedCard(
-                                onClick = { split = splitTitle },
-                                colors = CardDefaults.outlinedCardColors(
-                                    containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surface
-                                ),
-                                border = androidx.compose.foundation.BorderStroke(
-                                    width = if (isSelected) 2.dp else 1.dp,
-                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
-                                ),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        RadioButton(
-                                            selected = isSelected,
-                                            onClick = { split = splitTitle },
-                                            colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
-                                        )
-                                        Text(splitTitle, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
-                                    }
-                                    Text(
-                                        "📅 $splitSchedule",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontSize = 11.sp,
-                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // Height & Weight & Auto-Calculate Calories
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.md), modifier = Modifier.fillMaxWidth()) {
                         OutlinedTextField(
                             value = heightStr,
-                            onValueChange = {
-                                heightStr = it
-                                if (it.toDoubleOrNull() != null) autoCalculateCalories()
-                            },
+                            onValueChange = { heightStr = it },
                             label = { Text("Height (${if (unitSystem == UnitSystem.METRIC) "cm" else "in"})") },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true
+                            modifier = Modifier.weight(1f)
                         )
                         OutlinedTextField(
                             value = weightStr,
-                            onValueChange = {
-                                weightStr = it
-                                if (it.toDoubleOrNull() != null) autoCalculateCalories()
-                            },
+                            onValueChange = { weightStr = it },
                             label = { Text("Weight (${if (unitSystem == UnitSystem.METRIC) "kg" else "lb"})") },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true
+                            modifier = Modifier.weight(1f)
                         )
                     }
 
-                    NumberField("Default rest seconds", rest, { rest = it }, Modifier.fillMaxWidth())
-
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Calorie Goal (kcal)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            OutlinedButton(
-                                onClick = { autoCalculateCalories() },
-                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                                modifier = Modifier.height(28.dp),
-                                shape = RoundedCornerShape(6.dp)
-                            ) {
-                                Text("⚡ Auto-calculate", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                        OutlinedTextField(
-                            value = calories,
-                            onValueChange = { calories = it },
-                            label = { Text("Daily Calories") },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            supportingText = { Text("Calculated from $weightStr ${if (unitSystem == UnitSystem.METRIC) "kg" else "lb"} & $heightStr ${if (unitSystem == UnitSystem.METRIC) "cm" else "in"} for $goal") }
-                        )
-                    }
-
-                    NumberField("Water goal (ml)", water, { water = it }, Modifier.fillMaxWidth())
-                    ToggleRow("Sound cues", profile.soundEnabled) { viewModel.save(profile.copy(soundEnabled = it)) }
-                    ToggleRow("Vibration feedback", profile.vibrationEnabled) { viewModel.save(profile.copy(vibrationEnabled = it)) }
-                    ToggleRow("Daily workout reminders", profile.workoutReminderEnabled) { viewModel.save(profile.copy(workoutReminderEnabled = it)) }
-
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Button(
-                            onClick = {
-                                val parsedH = heightStr.toDoubleOrNull()
-                                val parsedW = weightStr.toDoubleOrNull()
-
-                                val heightCmValue = if (parsedH != null) {
-                                    if (unitSystem == UnitSystem.IMPERIAL) parsedH * 2.54 else parsedH
-                                } else profile.heightCm
-
-                                val weightKgValue = if (parsedW != null) {
-                                    if (unitSystem == UnitSystem.IMPERIAL) parsedW / 2.20462262185 else parsedW
-                                } else profile.weightKg
-
-                                viewModel.save(
-                                    profile.copy(
-                                        displayName = name,
-                                        gender = gender,
-                                        primaryGoal = goal,
-                                        unitSystem = unitSystem,
-                                        heightCm = heightCmValue,
-                                        weightKg = weightKgValue,
-                                        preferredSplit = split,
-                                        defaultRestSeconds = rest.toIntOrNull() ?: profile.defaultRestSeconds,
-                                        calorieGoal = calories.toIntOrNull() ?: profile.calorieGoal,
-                                        waterGoalMl = water.toIntOrNull() ?: profile.waterGoalMl,
-                                    )
-                                )
-                                settingsFeedback = "✅ Profile settings saved successfully!"
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Save settings & Update Split")
-                        }
-
-                        if (settingsFeedback.isNotBlank()) {
-                            Text(
-                                text = settingsFeedback,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // -------------------------------------------------------------
-        // WATER REMINDERS & NOTIFICATIONS
-        // -------------------------------------------------------------
-        item {
-            var waterInterval by remember { mutableIntStateOf(2) }
-            val isWaterReminderActive = reminders.any { it.id == "water-reminder" && it.enabled }
-
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Surface(
-                                shape = androidx.compose.foundation.shape.CircleShape,
-                                color = MaterialTheme.colorScheme.primaryContainer,
-                                modifier = Modifier.size(36.dp)
-                            ) {
-                                androidx.compose.foundation.layout.Box(contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Default.WaterDrop, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                                }
-                            }
-                            Column {
-                                Text("Water Intake Reminders", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
-                                Text("Stay hydrated throughout training days", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                        Switch(
-                            checked = isWaterReminderActive,
-                            onCheckedChange = { on ->
-                                if (on) {
-                                    viewModel.scheduleWaterReminder(waterInterval)
-                                } else {
-                                    viewModel.cancelWaterReminder()
-                                }
-                            }
-                        )
-                    }
-
-                    if (isWaterReminderActive) {
-                        Text("Reminder Frequency:", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                            listOf(1, 2, 3, 4).forEach { hours ->
-                                FilterChip(
-                                    selected = waterInterval == hours,
-                                    onClick = {
-                                        waterInterval = hours
-                                        viewModel.scheduleWaterReminder(hours)
-                                    },
-                                    label = { Text("Every ${hours}h") },
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-                    }
-
-                    OutlinedButton(
+                    PrimaryButton(
+                        text = "Save Preferences",
                         onClick = {
-                            viewModel.testWaterReminder(
-                                currentMl = 500,
-                                goalMl = profile.waterGoalMl
+                            val parsedH = heightStr.toDoubleOrNull()
+                            val parsedW = weightStr.toDoubleOrNull()
+                            val canonicalH = if (parsedH != null) {
+                                if (unitSystem == UnitSystem.IMPERIAL) parsedH * 2.54 else parsedH
+                            } else profile.heightCm
+                            val canonicalW = if (parsedW != null) {
+                                if (unitSystem == UnitSystem.IMPERIAL) parsedW / 2.20462262185 else parsedW
+                            } else profile.weightKg
+
+                            viewModel.save(
+                                profile.copy(
+                                    displayName = name,
+                                    gender = gender,
+                                    primaryGoal = goal,
+                                    unitSystem = unitSystem,
+                                    heightCm = canonicalH,
+                                    weightKg = canonicalW,
+                                    preferredSplit = split,
+                                )
                             )
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Icon(Icons.Default.NotificationsActive, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Test Hydration Alert Now")
-                    }
-                }
-            }
-        }
-
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-            ) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SectionTitle("Daily workout reminders")
-                    OutlinedTextField(
-                        value = reminderTitle,
-                        onValueChange = { reminderTitle = it },
-                        label = { Text("Title") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-
-                    val displayTime = String.format(java.util.Locale.getDefault(), "%02d:%02d", selectedHour, selectedMinute)
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text("Scheduled Local Time", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(displayTime, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                        }
-
-                        OutlinedButton(
-                            onClick = { showTimePicker = true },
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text("Select Time")
-                        }
-                    }
-
-                    Button(
-                        onClick = {
-                            val timeMinutes = selectedHour * 60 + selectedMinute
-                            viewModel.createReminder(reminderTitle, timeMinutes)
-                            reminderFeedback = "✅ Workout reminder scheduled for $displayTime local time!"
                         },
                         modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Schedule daily reminder")
-                    }
-
-                    if (reminderFeedback.isNotBlank()) {
-                        Text(
-                            text = reminderFeedback,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                    )
                 }
             }
         }
-
-        items(reminders, key = { it.id }) {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-            ) {
-                Column(Modifier.padding(12.dp)) {
-                    Text(it.title, fontWeight = FontWeight.SemiBold)
-                    Text("At ${String.format(java.util.Locale.getDefault(), "%02d:%02d", it.timeMinutes / 60, it.timeMinutes % 60)}")
-                }
-            }
-        }
-    }
-
-    if (showTimePicker) {
-        val timePickerState = rememberTimePickerState(
-            initialHour = selectedHour,
-            initialMinute = selectedMinute,
-            is24Hour = true
-        )
-        AlertDialog(
-            onDismissRequest = { showTimePicker = false },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        selectedHour = timePickerState.hour
-                        selectedMinute = timePickerState.minute
-                        showTimePicker = false
-                    }
-                ) {
-                    Text("OK")
-                }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = { showTimePicker = false }) {
-                    Text("Cancel")
-                }
-            },
-            title = { Text("Set Reminder Time") },
-            text = {
-                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    TimePicker(state = timePickerState)
-                }
-            }
-        )
     }
 }
-
 
 @Composable
 private fun DataPanel(
@@ -1529,462 +834,49 @@ private fun DataPanel(
     onSyncHealth: () -> Unit,
     onOpenHealthSettings: () -> Unit,
 ) {
-    val context = LocalContext.current
-    var importText by remember { mutableStateOf("") }
-    var userGeminiInstruction by remember { mutableStateOf("Calibrate my daily calories, water targets, and training volume based on my current progression.") }
-    var formatForAppSync by remember { mutableStateOf(true) }
-    var pasteSyncJson by remember { mutableStateOf("") }
-
-    val transientState = viewModel.transient
-
     var showDeleteConfirmation by remember { mutableStateOf(false) }
-    var showCloudRestoreConfirmation by remember { mutableStateOf(false) }
-    var showImportConfirmation by remember { mutableStateOf(false) }
-
-    val presetInstructions = listOf(
-        "⚡ Calorie & Water Targets" to "Calibrate my daily calorie and water goals to optimize recovery.",
-        "🏋️ Routine & Volume Optimization" to "Analyze my training split and volume, suggesting workout adjustments.",
-        "📊 Full Health & Training Audit" to "Comprehensive audit of weight trends, workouts, and nutrition with sync adjustments."
-    )
 
     if (showDeleteConfirmation) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirmation = false },
             title = { Text("Delete All Local Data?") },
-            text = { Text("This will permanently remove all your local workout history, body measurements, nutrition logs, and custom settings, and restore factory defaults. This action cannot be undone.") },
+            text = { Text("This will permanently remove all your local workout history, body measurements, nutrition logs, and custom settings.") },
             confirmButton = {
-                Button(
+                DestructiveButton(
+                    text = "Delete All Data",
                     onClick = {
                         showDeleteConfirmation = false
                         viewModel.deleteAllData()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text("Delete All Data")
-                }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = { showDeleteConfirmation = false }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-
-    if (showCloudRestoreConfirmation) {
-        AlertDialog(
-            onDismissRequest = { showCloudRestoreConfirmation = false },
-            title = { Text("Restore Data from Cloud?") },
-            text = { Text("This will overwrite your current local workout data and profile settings with your latest cloud backup. Any unbacked-up local changes will be replaced.") },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showCloudRestoreConfirmation = false
-                        viewModel.cloudRestore()
                     }
-                ) {
-                    Text("Restore Backup")
-                }
+                )
             },
             dismissButton = {
-                OutlinedButton(onClick = { showCloudRestoreConfirmation = false }) {
-                    Text("Cancel")
-                }
+                SecondaryButton(text = "Cancel", onClick = { showDeleteConfirmation = false })
             }
         )
     }
 
-    if (showImportConfirmation) {
-        AlertDialog(
-            onDismissRequest = { showImportConfirmation = false },
-            title = { Text("Import Backup Data?") },
-            text = { Text("Importing backup data will update and replace your current workout database with the contents of the backup JSON file. Are you sure you want to proceed?") },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showImportConfirmation = false
-                        viewModel.importJson(importText) {
-                            importText = ""
-                        }
-                    }
-                ) {
-                    Text("Import Backup")
-                }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = { showImportConfirmation = false }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        // Status banner if present
-        if (transientState.status.isNotBlank()) {
-            item {
-                val isError = transientState.status.startsWith("❌") || transientState.status.contains("failed", ignoreCase = true) || transientState.status.contains("error", ignoreCase = true)
-                Surface(
-                    color = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer,
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        transientState.status,
-                        color = if (isError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.padding(12.dp),
-                        fontWeight = FontWeight.SemiBold,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-            }
-        }
-
-        // Data Privacy Disclosure Card
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(AppSpacing.lg)) {
         item {
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                modifier = Modifier.fillMaxWidth()
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
             ) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("🔒 Data Privacy & Off-Device Sharing", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
-                    Text("• Copy Data & Local Export: Copies full JSON export (workout history, body metrics, nutrition logs, settings) to your clipboard or local file. Data stays on your device unless manually shared.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("• Export to Gemini AI: Transmits your workout history, body measurements, nutrition logs, and custom prompt instructions to Gemini AI for analysis.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("• Cloud Backup: Uploads an encrypted database backup to your linked Google Account storage.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
+                Column(Modifier.padding(AppSpacing.lg), verticalArrangement = Arrangement.spacedBy(AppSpacing.md)) {
+                    SectionTitle("Data & Privacy")
 
-        // -------------------------------------------------------------
-        // EXPORT TO GEMINI AI & DIRECT APP SYNC
-        // -------------------------------------------------------------
-        item {
-            ElevatedCard(
-                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Surface(
-                            shape = androidx.compose.foundation.shape.CircleShape,
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            androidx.compose.foundation.layout.Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                            }
-                        }
-                        Column {
-                            Text("Export Data to Gemini & App Sync", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                            Text("Elite sports science analysis with one-tap sync back into GymTracker", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
+                    PrimaryButton(text = "Export JSON Backup", onClick = viewModel::exportJson, modifier = Modifier.fillMaxWidth())
+                    SecondaryButton(text = "Export CSV Data", onClick = viewModel::exportCsv, modifier = Modifier.fillMaxWidth())
 
                     HorizontalDivider()
 
-                    // Quick Preset Chips
-                    Text("Prompt Objective:", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        presetInstructions.forEach { (label, prompt) ->
-                            FilterChip(
-                                selected = userGeminiInstruction == prompt,
-                                onClick = { userGeminiInstruction = prompt },
-                                label = { Text(label, fontSize = 12.sp) }
-                            )
-                        }
-                    }
-
-                    // Editable custom instruction
-                    OutlinedTextField(
-                        value = userGeminiInstruction,
-                        onValueChange = { userGeminiInstruction = it },
-                        label = { Text("Instructions for Gemini Coach") },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 2,
-                        maxLines = 4
-                    )
-
-                    // Sync Schema Toggle (Mandatory requirement)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Checkbox(
-                            checked = formatForAppSync,
-                            onCheckedChange = { formatForAppSync = it },
-                            colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.primary)
-                        )
-                        Column(Modifier.weight(1f)) {
-                            Text("Ask Gemini to format response for direct sync back to app", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                            Text("Returns structured parameters (calories, water, split, reminders) that sync immediately.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-
-                    // Action Buttons Row
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        Button(
-                            onClick = {
-                                viewModel.exportAndAnalyzeWithGemini(userGeminiInstruction, formatForAppSync)
-                            },
-                            enabled = !transientState.isExportingGemini,
-                            modifier = Modifier.weight(1.3f),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            if (transientState.isExportingGemini) {
-                                androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
-                                Spacer(Modifier.width(6.dp))
-                                Text("Analyzing...")
-                            } else {
-                                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Export to Gemini")
-                            }
-                        }
-
-                        OutlinedButton(
-                            onClick = {
-                                viewModel.copyDataToClipboard(context)
-                            },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Copy Data")
-                        }
-                    }
-
-                    // Gemini Sync Card if payload is received
-                    transientState.geminiSyncPayload?.let { payload ->
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
-                            border = androidx.compose.foundation.BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Icon(Icons.Default.Sync, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                    Text("Gemini Recommendations Ready to Sync", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                }
-
-                                Text(payload.summary, style = MaterialTheme.typography.bodyMedium)
-
-                                HorizontalDivider(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
-
-                                Text("Proposed App Changes:", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                                    payload.recommendedCalorieGoal?.let { cal ->
-                                        Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.weight(1f)) {
-                                            Column(Modifier.padding(8.dp)) {
-                                                Text("Calories", style = MaterialTheme.typography.labelSmall)
-                                                Text("$cal kcal", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                            }
-                                        }
-                                    }
-                                    payload.recommendedWaterGoalMl?.let { water ->
-                                        Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.weight(1f)) {
-                                            Column(Modifier.padding(8.dp)) {
-                                                Text("Water Goal", style = MaterialTheme.typography.labelSmall)
-                                                Text("$water ml", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                            }
-                                        }
-                                    }
-                                }
-
-                                payload.recommendedSplit?.let { split ->
-                                    Text("• Recommended Split: $split", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-                                }
-
-                                if (payload.suggestedReminders.isNotEmpty()) {
-                                    Text("• Suggested Reminders: ${payload.suggestedReminders.joinToString { it.title }}", style = MaterialTheme.typography.bodySmall)
-                                }
-
-                                Button(
-                                    onClick = { viewModel.syncGeminiToApp(payload) },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Icon(Icons.Default.Sync, contentDescription = null)
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("Apply & Sync Back to App", fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
-
-                    // Display raw response text if available
-                    if (transientState.geminiExportResponse.isNotBlank() && transientState.geminiSyncPayload == null) {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("Gemini Response:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
-                                Text(transientState.geminiExportResponse, style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // -------------------------------------------------------------
-        // PASTE EXTERNAL GEMINI RESPONSE TO SYNC
-        // -------------------------------------------------------------
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-            ) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SectionTitle("Sync External Gemini Response")
-                    Text("Ran Gemini in browser or chat? Paste the JSON response here to sync into GymTracker.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    OutlinedTextField(
-                        value = pasteSyncJson,
-                        onValueChange = { pasteSyncJson = it },
-                        label = { Text("Paste Gemini JSON response") },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 3,
-                        maxLines = 6
-                    )
-                    Button(
-                        onClick = {
-                            if (pasteSyncJson.isNotBlank()) {
-                                viewModel.parseAndSyncRawGeminiJson(pasteSyncJson) {
-                                    pasteSyncJson = ""
-                                }
-                            }
-                        },
-                        enabled = pasteSyncJson.isNotBlank(),
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Icon(Icons.Default.Sync, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Parse & Sync to App")
-                    }
-                }
-            }
-        }
-
-        // -------------------------------------------------------------
-        // EXPORT & GDPR BACKUPS
-        // -------------------------------------------------------------
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-            ) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SectionTitle("Local Export & Restore")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        Button(onClick = viewModel::exportJson, modifier = Modifier.weight(1f)) { Text("Export JSON") }
-                        Button(onClick = viewModel::exportCsv, modifier = Modifier.weight(1f)) { Text("Export CSV") }
-                    }
-                    OutlinedTextField(value = importText, onValueChange = { importText = it }, label = { Text("Import JSON Backup") }, modifier = Modifier.fillMaxWidth(), minLines = 3)
-                    Button(
-                        onClick = {
-                            if (importText.isBlank()) {
-                                viewModel.importJson("")
-                            } else {
-                                showImportConfirmation = true
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Import JSON Backup")
-                    }
-                    OutlinedButton(
+                    DestructiveButton(
+                        text = "Delete All Data",
                         onClick = { showDeleteConfirmation = true },
                         modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Delete Local Data")
-                    }
-                }
-            }
-        }
-
-        // -------------------------------------------------------------
-        // GOOGLE ACCOUNT & HEALTH CONNECT CLOUD BACKUP
-        // -------------------------------------------------------------
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-            ) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            GoogleLogoIcon(Modifier.size(20.dp))
-                            SectionTitle("Google Account & Health Link")
-                        }
-                    }
-
-                    if (profile.googleLinked && !profile.googleEmail.isNullOrBlank()) {
-                        GoogleAccountProfileCard(
-                            email = profile.googleEmail,
-                            displayName = profile.googleDisplayName ?: "Athlete",
-                            photoUrl = profile.googlePhotoUrl,
-                            healthLinked = profile.healthConnectLinked,
-                            onSignOut = onSignOut
-                        )
-
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                            Button(onClick = onSyncHealth, modifier = Modifier.weight(1f)) {
-                                Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Sync Health")
-                            }
-                            OutlinedButton(onClick = onOpenHealthSettings, modifier = Modifier.weight(1f)) {
-                                Text("Health Settings")
-                            }
-                        }
-
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                            Button(onClick = viewModel::cloudBackup, modifier = Modifier.weight(1f)) { Text("Cloud Backup") }
-                            Button(onClick = { showCloudRestoreConfirmation = true }, modifier = Modifier.weight(1f)) { Text("Cloud Restore") }
-                        }
-                    } else {
-                        Text(
-                            text = "Sign in with Google to synchronize your workout history, body weight logs, and daily progress to Google Health Connect and cloud storage.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                            GoogleSignInButton(onClick = onSignIn, modifier = Modifier.weight(1f))
-                        }
-                    }
+                    )
                 }
             }
         }
     }
-}
-
-@Composable
-private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Text(label)
-        Switch(checked = checked, onCheckedChange = onChange)
-    }
-}
-
-@Composable
-private fun NumberField(label: String, value: String, onChange: (String) -> Unit, modifier: Modifier) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = onChange,
-        label = { Text(label) },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        modifier = modifier,
-        singleLine = true,
-    )
 }

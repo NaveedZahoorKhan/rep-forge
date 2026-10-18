@@ -2,6 +2,17 @@ package com.gymtracker.app.presentation.navigation
 
 import kotlinx.serialization.Serializable
 
+/**
+ * Primary App Navigation destinations:
+ * - Today (DashboardRoute)
+ * - Train (WorkoutsRoute)
+ * - Progress (ProgressRoute)
+ * - You (ProfileRoute)
+ */
+typealias TodayRoute = DashboardRoute
+typealias TrainRoute = WorkoutsRoute
+typealias YouRoute = ProfileRoute
+
 @Serializable
 data object OnboardingRoute
 
