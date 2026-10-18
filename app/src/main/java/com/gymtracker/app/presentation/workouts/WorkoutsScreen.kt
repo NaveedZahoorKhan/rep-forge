@@ -1,8 +1,12 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package com.gymtracker.app.presentation.workouts
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,18 +15,24 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -156,10 +166,15 @@ fun WorkoutsScreen(
                     workouts = state.workouts,
                     onStartWorkout = onStartWorkout,
                     onOpenGemini = onOpenGemini,
-                    onOpenHistory = { tab = 1 },
                 )
                 1 -> WorkoutHistoryScreen()
-                2 -> CreateWorkoutPanel(state.exercises, viewModel, onStartWorkout, onOpenGemini)
+                2 -> CreateWorkoutPanel(
+                    exercises = state.exercises,
+                    viewModel = viewModel,
+                    onStartWorkout = onStartWorkout,
+                    onOpenGemini = onOpenGemini,
+                    onSaved = { tab = 0 }
+                )
                 3 -> ExerciseLibrary(state.exercises)
                 4 -> PlannerPanel(
                     schedule = state.schedule,
@@ -193,7 +208,6 @@ private fun WorkoutList(
     workouts: List<WorkoutEntity>,
     onStartWorkout: (String) -> Unit,
     onOpenGemini: (() -> Unit)? = null,
-    onOpenHistory: (() -> Unit)? = null,
 ) {
     var selectedFilter by remember { mutableStateOf("All") }
     val filters = listOf("All", "Push", "Pull", "Legs", "Bro Split", "Upper", "Lower")
@@ -236,38 +250,12 @@ private fun WorkoutList(
             }
         }
 
-        onOpenHistory?.let { openHistory ->
-            item {
-                Card(
-                    onClick = openHistory,
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f)),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f))
-                ) {
-                    Row(
-                        modifier = Modifier.padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
-                        Column(Modifier.weight(1f)) {
-                            Text("Workout History & Volume Logs", fontWeight = FontWeight.Bold)
-                            Text(
-                                "View past session summaries, completion dates & exercise volume over time",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
         item {
-            androidx.compose.foundation.layout.Row(
+            LazyRow(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                filters.take(4).forEach { filter ->
+                items(filters) { filter ->
                     FilterChip(
                         selected = selectedFilter == filter,
                         onClick = { selectedFilter = filter },
@@ -329,12 +317,14 @@ private fun WorkoutList(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CreateWorkoutPanel(
     exercises: List<ExerciseEntity>,
     viewModel: WorkoutsViewModel,
     onStartWorkout: (String) -> Unit,
     onOpenGemini: (() -> Unit)? = null,
+    onSaved: (() -> Unit)? = null,
 ) {
     var name by remember { mutableStateOf("Custom Strength Day") }
     var split by remember { mutableStateOf("Custom") }
@@ -348,112 +338,313 @@ private fun CreateWorkoutPanel(
     var amrap by remember { mutableStateOf(false) }
     val selected = remember { mutableStateListOf<String>() }
 
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        onOpenGemini?.let { openGemini ->
-            item {
-                Card(
-                    onClick = openGemini,
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    var exerciseSearchQuery by remember { mutableStateOf("") }
+    var selectedMuscleFilter by remember { mutableStateOf<String?>(null) }
+
+    val filteredExercises = remember(exercises, exerciseSearchQuery, selectedMuscleFilter) {
+        exercises.filter { exercise ->
+            (exerciseSearchQuery.isBlank() || exercise.name.contains(exerciseSearchQuery, ignoreCase = true)) &&
+            (selectedMuscleFilter == null || exercise.primaryMuscle.label().equals(selectedMuscleFilter, ignoreCase = true))
+        }
+    }
+
+    val validationError: String? = when {
+        name.isBlank() -> "Workout name cannot be empty"
+        sets <= 0 -> "Sets must be at least 1"
+        repsMin <= 0 -> "Min reps must be at least 1"
+        repsMax < repsMin -> "Max reps ($repsMax) cannot be less than min reps ($repsMin)"
+        weight < 0.0 -> "Starting weight cannot be negative"
+        selected.isEmpty() -> "Select at least 1 exercise"
+        else -> null
+    }
+    val isValid = validationError == null
+
+    Column(Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            onOpenGemini?.let { openGemini ->
+                item {
+                    Card(
+                        onClick = openGemini,
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
                     ) {
-                        Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Column(Modifier.weight(1f)) {
-                            Text("Want AI to build this for you?", fontWeight = FontWeight.Bold)
-                            Text(
-                                "Snap gym machines & set health goals for instant custom routines",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Column(Modifier.weight(1f)) {
+                                Text("Want AI to build this for you?", fontWeight = FontWeight.Bold)
+                                Text(
+                                    "Snap gym machines & set health goals for instant custom routines",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Workout name") },
+                    isError = name.isBlank(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            item {
+                OutlinedTextField(
+                    value = split,
+                    onValueChange = { split = it },
+                    label = { Text("Split") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            item {
+                SectionTitle("Set defaults")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    SmallNumberField(
+                        label = "Sets",
+                        value = sets.toString(),
+                        onValueChange = { sets = it.toIntOrNull() ?: 0 },
+                        modifier = Modifier.weight(1f)
+                    )
+                    SmallNumberField(
+                        label = "Min reps",
+                        value = repsMin.toString(),
+                        onValueChange = { repsMin = it.toIntOrNull() ?: 0 },
+                        modifier = Modifier.weight(1f)
+                    )
+                    SmallNumberField(
+                        label = "Max reps",
+                        value = repsMax.toString(),
+                        onValueChange = { repsMax = it.toIntOrNull() ?: 0 },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                if (repsMax < repsMin) {
+                    Text(
+                        "Max reps cannot be less than min reps",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
+
+            item {
+                SmallNumberField(
+                    label = "Starting weight kg",
+                    value = weight.toString(),
+                    onValueChange = { weight = it.toDoubleOrNull() ?: 0.0 },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            item {
+                Text("Rest ${rest}s", fontWeight = FontWeight.SemiBold)
+                Slider(value = rest.toFloat(), onValueChange = { rest = it.toInt() }, valueRange = 30f..180f, steps = 4)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(30, 60, 90, 120, 180).forEach {
+                        FilterChip(selected = rest == it, onClick = { rest = it }, label = { Text("${it}s") })
+                    }
+                }
+            }
+
+            item {
+                SetTypeDropdown(setType = setType, onChange = { setType = it })
+            }
+
+            item {
+                OutlinedTextField(
+                    value = superset,
+                    onValueChange = { superset = it },
+                    label = { Text("Superset group") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(checked = amrap, onCheckedChange = { amrap = it })
+                    Spacer(Modifier.width(8.dp))
+                    Text("AMRAP last set")
+                }
+            }
+
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SectionTitle("Select Exercises (${selected.size} selected)")
+                    if (selected.isNotEmpty()) {
+                        TextButton(onClick = { selected.clear() }) {
+                            Text("Clear selection")
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = exerciseSearchQuery,
+                    onValueChange = { exerciseSearchQuery = it },
+                    placeholder = { Text("Search exercises...") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (exerciseSearchQuery.isNotEmpty()) {
+                            IconButton(onClick = { exerciseSearchQuery = "" }) {
+                                Icon(Icons.Default.Close, contentDescription = "Clear")
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+            }
+
+            item {
+                val muscles = listOf("Chest", "Back", "Legs", "Shoulders", "Arms", "Core")
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    item {
+                        FilterChip(
+                            selected = selectedMuscleFilter == null,
+                            onClick = { selectedMuscleFilter = null },
+                            label = { Text("All Muscles", fontSize = 11.sp) }
+                        )
+                    }
+                    items(muscles) { muscle ->
+                        FilterChip(
+                            selected = selectedMuscleFilter == muscle,
+                            onClick = { selectedMuscleFilter = if (selectedMuscleFilter == muscle) null else muscle },
+                            label = { Text(muscle, fontSize = 11.sp) }
+                        )
+                    }
+                }
+            }
+
+            if (filteredExercises.isEmpty()) {
+                item {
+                    EmptyState(
+                        title = "No exercises found",
+                        detail = "Try adjusting your exercise search or muscle filter",
+                    )
+                }
+            } else {
+                items(filteredExercises, key = { it.id }) { exercise ->
+                    val checked = selected.contains(exercise.id)
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (checked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surface
+                        ),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                        )
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = checked,
+                                onCheckedChange = {
+                                    if (checked) selected.remove(exercise.id) else selected.add(exercise.id)
+                                },
                             )
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(exercise.name, fontWeight = FontWeight.SemiBold)
+                                TagRow(listOf(exercise.primaryMuscle.label(), exercise.equipment.label(), exercise.difficulty.label()))
+                            }
                         }
                     }
                 }
             }
         }
-        item {
-            OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Workout name") }, modifier = Modifier.fillMaxWidth())
-        }
-        item {
-            OutlinedTextField(value = split, onValueChange = { split = it }, label = { Text("Split") }, modifier = Modifier.fillMaxWidth())
-        }
-        item {
-            SectionTitle("Set defaults")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                SmallNumberField("Sets", sets.toString(), { sets = it.toIntOrNull() ?: sets }, Modifier.weight(1f))
-                SmallNumberField("Min reps", repsMin.toString(), { repsMin = it.toIntOrNull() ?: repsMin }, Modifier.weight(1f))
-                SmallNumberField("Max reps", repsMax.toString(), { repsMax = it.toIntOrNull() ?: repsMax }, Modifier.weight(1f))
-            }
-        }
-        item {
-            SmallNumberField("Starting weight kg", weight.toString(), { weight = it.toDoubleOrNull() ?: weight }, Modifier.fillMaxWidth())
-        }
-        item {
-            Text("Rest ${rest}s", fontWeight = FontWeight.SemiBold)
-            Slider(value = rest.toFloat(), onValueChange = { rest = it.toInt() }, valueRange = 30f..180f, steps = 4)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(30, 60, 90, 120, 180).forEach {
-                    FilterChip(selected = rest == it, onClick = { rest = it }, label = { Text("${it}s") })
-                }
-            }
-        }
-        item {
-            SetTypeDropdown(setType = setType, onChange = { setType = it })
-        }
-        item {
-            OutlinedTextField(value = superset, onValueChange = { superset = it }, label = { Text("Superset group") }, modifier = Modifier.fillMaxWidth())
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Switch(checked = amrap, onCheckedChange = { amrap = it })
-                Text("AMRAP last set")
-            }
-        }
-        item { SectionTitle("Exercises") }
-        items(exercises, key = { it.id }) { exercise ->
-            val checked = selected.contains(exercise.id)
-            Card {
-                Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(
-                        checked = checked,
-                        onCheckedChange = {
-                            if (checked) selected.remove(exercise.id) else selected.add(exercise.id)
-                        },
+
+        // Persistent / Sticky Save Action Bar
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            tonalElevation = 6.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (validationError != null) {
+                    Text(
+                        validationError,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium
                     )
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(exercise.name, fontWeight = FontWeight.SemiBold)
-                        TagRow(listOf(exercise.primaryMuscle.label(), exercise.equipment.label(), exercise.difficulty.label()))
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        modifier = Modifier.weight(1f),
+                        enabled = isValid,
+                        onClick = {
+                            val draft = WorkoutDraft(
+                                name = name.trim(),
+                                description = "Custom workout",
+                                splitType = split.trim().ifBlank { "Custom" },
+                                exercises = selected.map {
+                                    WorkoutExerciseDraft(
+                                        exerciseId = it,
+                                        restSeconds = rest,
+                                        setCount = sets,
+                                        repsMin = repsMin,
+                                        repsMax = repsMax,
+                                        weight = weight,
+                                        setType = setType,
+                                        supersetGroup = superset.takeIf { value -> value.isNotBlank() },
+                                        amrapLastSet = amrap,
+                                    )
+                                },
+                            )
+                            viewModel.createWorkout(draft) {
+                                onSaved?.invoke()
+                            }
+                        }
+                    ) {
+                        Text("Save Workout")
+                    }
+
+                    Button(
+                        modifier = Modifier.weight(1.2f),
+                        enabled = isValid,
+                        onClick = {
+                            val draft = WorkoutDraft(
+                                name = name.trim(),
+                                description = "Custom workout",
+                                splitType = split.trim().ifBlank { "Custom" },
+                                exercises = selected.map {
+                                    WorkoutExerciseDraft(
+                                        exerciseId = it,
+                                        restSeconds = rest,
+                                        setCount = sets,
+                                        repsMin = repsMin,
+                                        repsMax = repsMax,
+                                        weight = weight,
+                                        setType = setType,
+                                        supersetGroup = superset.takeIf { value -> value.isNotBlank() },
+                                        amrapLastSet = amrap,
+                                    )
+                                },
+                            )
+                            viewModel.createWorkout(draft, onStartWorkout)
+                        }
+                    ) {
+                        Text("Save & Start")
                     }
                 }
-            }
-        }
-        item {
-            Button(
-                modifier = Modifier.fillMaxWidth(),
-                enabled = selected.isNotEmpty() && name.isNotBlank(),
-                onClick = {
-                    val draft = WorkoutDraft(
-                        name = name,
-                        description = "Custom workout",
-                        splitType = split,
-                        exercises = selected.map {
-                            WorkoutExerciseDraft(
-                                exerciseId = it,
-                                restSeconds = rest,
-                                setCount = sets,
-                                repsMin = repsMin,
-                                repsMax = repsMax,
-                                weight = weight,
-                                setType = setType,
-                                supersetGroup = superset.takeIf { value -> value.isNotBlank() },
-                                amrapLastSet = amrap,
-                            )
-                        },
-                    )
-                    viewModel.createWorkout(draft, onStartWorkout)
-                },
-            ) {
-                Text("Save and start")
             }
         }
     }
@@ -643,10 +834,10 @@ private fun PlannerPanel(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         workout?.let { w ->
-                            Row(
-                                Modifier.fillMaxWidth(),
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                                verticalAlignment = Alignment.CenterVertically,
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
                                 val routine = remember(w, exercises) {
                                     DynamicWarmUpCatalog.suggestRoutineForWorkout(w, exercises)
@@ -671,10 +862,10 @@ private fun PlannerPanel(
                             }
                         }
                     } else {
-                        Row(
-                            Modifier.fillMaxWidth(),
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             Text("Active recovery, mobility, and hydration.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             OutlinedButton(
