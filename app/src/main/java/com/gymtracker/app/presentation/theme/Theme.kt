@@ -8,46 +8,77 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.graphics.Color
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.platform.LocalContext
 import com.gymtracker.app.data.local.entity.ThemeMode
 
 private val LightColors = lightColorScheme(
-    primary = Color(0xFF0F766E),        // Modern athletic deep teal
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFCCFBF1),
-    onPrimaryContainer = Color(0xFF115E59),
-    secondary = Color(0xFF4F46E5),      // Athletic royal indigo
-    onSecondary = Color.White,
-    secondaryContainer = Color(0xFFE0E7FF),
-    onSecondaryContainer = Color(0xFF3730A3),
-    tertiary = Color(0xFFD97706),       // Amber accent
-    onTertiary = Color.White,
-    background = Color(0xFFF8FAFC),     // Crisp, clean light background
-    onBackground = Color(0xFF0F172A),
-    surface = Color(0xFFFFFFFF),        // Pure white card surfaces
-    onSurface = Color(0xFF0F172A),
-    surfaceVariant = Color(0xFFF1F5F9),
-    onSurfaceVariant = Color(0xFF475569),
-    outline = Color(0xFFCBD5E1),
-    outlineVariant = Color(0xFFE2E8F0),
-    error = Color(0xFFDC2626),
-    onError = Color.White,
+    primary = LightPrimary,
+    onPrimary = LightOnPrimary,
+    primaryContainer = LightPrimaryContainer,
+    onPrimaryContainer = LightOnPrimaryContainer,
+    secondary = LightPrimary,
+    onSecondary = LightOnPrimary,
+    secondaryContainer = LightPrimaryContainer,
+    onSecondaryContainer = LightOnPrimaryContainer,
+    tertiary = LightPrimary,
+    onTertiary = LightOnPrimary,
+    background = LightBackground,
+    onBackground = LightOnBackground,
+    surface = LightSurface,
+    onSurface = LightOnSurface,
+    surfaceVariant = LightSurfaceVariant,
+    onSurfaceVariant = LightOnSurfaceVariant,
+    outline = LightOutline,
+    outlineVariant = LightOutlineVariant,
+    error = LightError,
+    onError = LightOnError,
+    errorContainer = LightErrorContainer,
+    onErrorContainer = LightOnErrorContainer,
 )
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFF2DD4BF),
-    onPrimary = Color(0xFF003731),
-    primaryContainer = Color(0xFF134E48),
-    onPrimaryContainer = Color(0xFFCCFBF1),
-    secondary = Color(0xFF818CF8),
-    onSecondary = Color(0xFF1E1B4B),
-    tertiary = Color(0xFFFBBF24),
-    background = Color(0xFF0B1117),
-    surface = Color(0xFF101820),
-    surfaceVariant = Color(0xFF253241),
-    error = Color(0xFFFFB4AB),
+    primary = DarkPrimary,
+    onPrimary = DarkOnPrimary,
+    primaryContainer = DarkPrimaryContainer,
+    onPrimaryContainer = DarkOnPrimaryContainer,
+    secondary = DarkPrimary,
+    onSecondary = DarkOnPrimary,
+    secondaryContainer = DarkPrimaryContainer,
+    onSecondaryContainer = DarkOnPrimaryContainer,
+    tertiary = DarkPrimary,
+    onTertiary = DarkOnPrimary,
+    background = DarkBackground,
+    onBackground = DarkOnBackground,
+    surface = DarkSurface,
+    onSurface = DarkOnSurface,
+    surfaceVariant = DarkSurfaceVariant,
+    onSurfaceVariant = DarkOnSurfaceVariant,
+    outline = DarkOutline,
+    outlineVariant = DarkOutlineVariant,
+    error = DarkError,
+    onError = DarkOnError,
+    errorContainer = DarkErrorContainer,
+    onErrorContainer = DarkOnErrorContainer,
 )
+
+object AppTheme {
+    val spacing: Spacing
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalSpacing.current
+
+    val extendedColors: ExtendedColors
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalExtendedColors.current
+
+    val customTypography: CustomTypography
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalCustomTypography.current
+}
 
 @Composable
 fun GymTrackerTheme(
@@ -69,9 +100,18 @@ fun GymTrackerTheme(
         LightColors
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = MaterialTheme.typography,
-        content = content,
-    )
+    val extendedColors = if (dark) DarkExtendedColors else LightExtendedColors
+
+    CompositionLocalProvider(
+        LocalSpacing provides Spacing(),
+        LocalExtendedColors provides extendedColors,
+        LocalCustomTypography provides CustomTypography(),
+    ) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = AppTypography,
+            shapes = AppShapes,
+            content = content,
+        )
+    }
 }
