@@ -32,6 +32,7 @@ interface GymRepository {
     fun observeWorkoutExercises(workoutId: String): Flow<List<WorkoutExerciseEntity>>
     fun observeAllWorkoutExercises(): Flow<List<WorkoutExerciseEntity>>
     suspend fun getAllWorkoutExercises(): List<WorkoutExerciseEntity>
+    fun observeAllSetTemplates(): Flow<List<com.gymtracker.app.data.local.entity.SetTemplateEntity>>
     fun observeActiveSession(): Flow<WorkoutSessionEntity?>
     fun observeSessionSets(sessionId: String): Flow<List<PerformedSetEntity>>
     fun observeHistory(): Flow<List<WorkoutSessionEntity>>

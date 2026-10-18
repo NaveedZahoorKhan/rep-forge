@@ -8,15 +8,16 @@ import com.gymtracker.app.data.local.entity.UserProfileEntity
 import com.gymtracker.app.data.local.entity.WeekDay
 import com.gymtracker.app.data.local.entity.WeeklyScheduleEntity
 import com.gymtracker.app.data.local.entity.WorkoutEntity
+import com.gymtracker.app.data.local.entity.WorkoutExerciseEntity
 import com.gymtracker.app.domain.model.WorkoutDraft
 import com.gymtracker.app.domain.model.WorkoutExerciseDraft
 import com.gymtracker.app.domain.repository.GymRepository
 import com.gymtracker.app.notification.WorkoutSoundPlayer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
@@ -59,12 +60,12 @@ class WorkoutsViewModelTest {
 
             when (method.name) {
                 "observeWorkouts" -> flowOf(listOf(
-                    WorkoutEntity(id = "w1", name = "Push Day A", splitType = "Push"),
-                    WorkoutEntity(id = "w2", name = "Pull Day A", splitType = "Pull"),
-                    WorkoutEntity(id = "w3", name = "Leg Day A", splitType = "Legs"),
-                    WorkoutEntity(id = "w4", name = "Bro Split Chest", splitType = "Bro Split"),
-                    WorkoutEntity(id = "w5", name = "Upper Power", splitType = "Upper"),
-                    WorkoutEntity(id = "w6", name = "Lower Power", splitType = "Lower")
+                    WorkoutEntity(id = "w1", name = "Push Day A", splitType = "Push", isTemplate = false),
+                    WorkoutEntity(id = "w2", name = "Pull Day A", splitType = "Pull", isTemplate = false),
+                    WorkoutEntity(id = "w3", name = "Leg Day A", splitType = "Legs", isTemplate = false),
+                    WorkoutEntity(id = "w4", name = "Bro Split Chest", splitType = "Bro Split", isTemplate = true),
+                    WorkoutEntity(id = "w5", name = "Upper Power", splitType = "Upper", isTemplate = true),
+                    WorkoutEntity(id = "w6", name = "Lower Power", splitType = "Lower", isTemplate = true)
                 ))
                 "observeExercises" -> flowOf(listOf(
                     ExerciseEntity(id = "e1", name = "Bench Press", primaryMuscle = MuscleGroup.CHEST, equipment = Equipment.BARBELL, difficulty = Difficulty.INTERMEDIATE, instructions = "Press bar from chest"),
@@ -73,6 +74,9 @@ class WorkoutsViewModelTest {
                 ))
                 "observeWeeklySchedule" -> flowOf(emptyList<WeeklyScheduleEntity>())
                 "observeUserProfile" -> flowOf(UserProfileEntity(preferredSplit = "Push Pull Legs (PPL)"))
+                "observeAllWorkoutExercises" -> flowOf(emptyList<WorkoutExerciseEntity>())
+                "getAllWorkoutExercises" -> emptyList<WorkoutExerciseEntity>()
+                "observeAllSetTemplates" -> flowOf(emptyList<Any>())
                 "createCustomWorkout" -> "new-workout-id-123"
                 "applyRoutineSplitSchedule" -> Unit
                 "createOrUpdateProfile" -> Unit
@@ -110,6 +114,129 @@ class WorkoutsViewModelTest {
         assertEquals(6, state.workouts.size)
         assertEquals(3, state.exercises.size)
         assertEquals("Push Pull Legs (PPL)", state.profile.preferredSplit)
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `routine search and filter state actions update state and clear properly`() = runTest(testDispatcher) {
+        val repo = createMockInterface<GymRepository>()
+        val soundPlayer = createMockInterface<WorkoutSoundPlayer>()
+        val viewModel = WorkoutsViewModel(repo, soundPlayer)
+
+        val collectJob = launch { viewModel.state.collect {} }
+        runCurrent()
+
+        viewModel.setRoutineSearchQuery("Push")
+        viewModel.setRoutineSplitFilter("Push")
+        viewModel.setRoutineEquipmentFilter("Barbell")
+        viewModel.setRoutineSubTab(1)
+        runCurrent()
+
+        var state = viewModel.state.value
+        assertEquals("Push", state.routineSearchQuery)
+        assertEquals("Push", state.routineSplitFilter)
+        assertEquals("Barbell", state.routineEquipmentFilter)
+        assertEquals(1, state.routineSubTab)
+
+        viewModel.clearRoutineFilters()
+        runCurrent()
+
+        state = viewModel.state.value
+        assertEquals("", state.routineSearchQuery)
+        assertEquals("All", state.routineSplitFilter)
+        assertEquals("All", state.routineEquipmentFilter)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `exercise catalog search and filter state actions update state and clear properly`() = runTest(testDispatcher) {
+        val repo = createMockInterface<GymRepository>()
+        val soundPlayer = createMockInterface<WorkoutSoundPlayer>()
+        val viewModel = WorkoutsViewModel(repo, soundPlayer)
+
+        val collectJob = launch { viewModel.state.collect {} }
+        runCurrent()
+
+        viewModel.setExerciseSearchQuery("Bench")
+        viewModel.setExerciseMuscleFilter("Chest")
+        viewModel.setExerciseEquipmentFilter("Barbell")
+        viewModel.setExerciseDifficultyFilter("Intermediate")
+        runCurrent()
+
+        var state = viewModel.state.value
+        assertEquals("Bench", state.exerciseSearchQuery)
+        assertEquals("Chest", state.exerciseMuscleFilter)
+        assertEquals("Barbell", state.exerciseEquipmentFilter)
+        assertEquals("Intermediate", state.exerciseDifficultyFilter)
+
+        viewModel.clearExerciseFilters()
+        runCurrent()
+
+        state = viewModel.state.value
+        assertEquals("", state.exerciseSearchQuery)
+        assertEquals("All", state.exerciseMuscleFilter)
+        assertEquals("All", state.exerciseEquipmentFilter)
+        assertEquals("All", state.exerciseDifficultyFilter)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `open and close routine detail updates selectedRoutineDetail in state`() = runTest(testDispatcher) {
+        val repo = createMockInterface<GymRepository>()
+        val soundPlayer = createMockInterface<WorkoutSoundPlayer>()
+        val viewModel = WorkoutsViewModel(repo, soundPlayer)
+
+        val collectJob = launch { viewModel.state.collect {} }
+        runCurrent()
+
+        val sampleWorkout = WorkoutEntity(id = "w1", name = "Push Day A", splitType = "Push")
+        viewModel.openRoutineDetail(sampleWorkout)
+        runCurrent()
+
+        assertEquals(sampleWorkout, viewModel.state.value.selectedRoutineDetail)
+
+        viewModel.closeRoutineDetail()
+        runCurrent()
+
+        assertNull(viewModel.state.value.selectedRoutineDetail)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `saveTemplateAsCustomWorkout creates new custom workout and provides feedback`() = runTest(testDispatcher) {
+        var createdDraftName: String? = null
+        val repo = createMockInterface<GymRepository> { methodName, args ->
+            if (methodName == "createCustomWorkout") {
+                val draft = args?.get(0) as? WorkoutDraft
+                createdDraftName = draft?.name
+                "custom-saved-id-999"
+            } else null
+        }
+        val soundPlayer = createMockInterface<WorkoutSoundPlayer>()
+        val viewModel = WorkoutsViewModel(repo, soundPlayer)
+
+        val collectJob = launch { viewModel.state.collect {} }
+        runCurrent()
+
+        val templateWorkout = WorkoutEntity(id = "t1", name = "Upper Power", splitType = "Upper", isTemplate = true)
+        var savedCallbackCalled = false
+
+        viewModel.saveTemplateAsCustomWorkout(templateWorkout) {
+            savedCallbackCalled = true
+        }
+        runCurrent()
+
+        assertEquals("Upper Power", createdDraftName)
+        assertTrue(savedCallbackCalled)
+        assertEquals("Routine 'Upper Power' saved to My Routines", viewModel.state.value.feedbackMessage)
+
+        viewModel.clearFeedbackMessage()
+        runCurrent()
+        assertNull(viewModel.state.value.feedbackMessage)
+
         collectJob.cancel()
     }
 

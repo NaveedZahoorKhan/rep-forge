@@ -67,6 +67,9 @@ interface GymDao {
     @Query("SELECT * FROM set_templates WHERE workoutExerciseId = :workoutExerciseId ORDER BY orderIndex")
     fun observeSetTemplates(workoutExerciseId: String): Flow<List<SetTemplateEntity>>
 
+    @Query("SELECT * FROM set_templates ORDER BY orderIndex")
+    fun observeAllSetTemplates(): Flow<List<SetTemplateEntity>>
+
     @Query("SELECT * FROM workout_sessions WHERE status = :status ORDER BY startedAt DESC LIMIT 1")
     fun observeSessionByStatus(status: SessionStatus): Flow<WorkoutSessionEntity?>
 
