@@ -26,6 +26,7 @@ import javax.inject.Inject
 
 enum class TimeRangeFilter(val label: String) {
     ALL("All Time"),
+    TODAY("Today"),
     LAST_7_DAYS("7 Days"),
     LAST_30_DAYS("30 Days"),
     LAST_90_DAYS("3 Months"),
@@ -50,6 +51,7 @@ data class WorkoutHistoryUiState(
     val averageVolumePerWorkoutKg: Double = 0.0,
     val expandedSessionId: String? = null,
     val showAddPastWorkoutDialog: Boolean = false,
+    val editingSessionSummary: WorkoutSessionSummary? = null,
 )
 
 @HiltViewModel
@@ -64,6 +66,7 @@ class WorkoutHistoryViewModel @Inject constructor(
     private val _selectedExerciseId = MutableStateFlow<String?>(null)
     private val _expandedSessionId = MutableStateFlow<String?>(null)
     private val _showAddDialog = MutableStateFlow(false)
+    private val _editingSessionSummary = MutableStateFlow<WorkoutSessionSummary?>(null)
 
     val exercises: StateFlow<List<ExerciseEntity>> = repository.observeExercises()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -90,6 +93,7 @@ class WorkoutHistoryViewModel @Inject constructor(
         exerciseVolumePoints,
         _expandedSessionId,
         _showAddDialog,
+        _editingSessionSummary,
     ) { args: Array<Any?> ->
         @Suppress("UNCHECKED_CAST")
         val summaries = args[0] as List<WorkoutSessionSummary>
@@ -103,14 +107,21 @@ class WorkoutHistoryViewModel @Inject constructor(
         val exPoints = args[6] as List<ExerciseVolumePoint>
         val expandedId = args[7] as String?
         val showAdd = args[8] as Boolean
+        val editingSummary = args[9] as WorkoutSessionSummary?
 
         val now = System.currentTimeMillis()
         val oneDayMs = 24L * 60 * 60 * 1000
+        val zone = ZoneId.systemDefault()
+        val todayDate = LocalDate.now(zone)
 
         val filteredByTime = summaries.filter { summary ->
             val date = summary.completedAt
             when (timeFilter) {
                 TimeRangeFilter.ALL -> true
+                TimeRangeFilter.TODAY -> {
+                    val sessionDate = Instant.ofEpochMilli(date).atZone(zone).toLocalDate()
+                    sessionDate.isEqual(todayDate)
+                }
                 TimeRangeFilter.LAST_7_DAYS -> date >= (now - 7 * oneDayMs)
                 TimeRangeFilter.LAST_30_DAYS -> date >= (now - 30 * oneDayMs)
                 TimeRangeFilter.LAST_90_DAYS -> date >= (now - 90 * oneDayMs)
@@ -148,6 +159,7 @@ class WorkoutHistoryViewModel @Inject constructor(
             averageVolumePerWorkoutKg = avgVol,
             expandedSessionId = expandedId,
             showAddPastWorkoutDialog = showAdd,
+            editingSessionSummary = editingSummary,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), WorkoutHistoryUiState())
 
@@ -172,7 +184,25 @@ class WorkoutHistoryViewModel @Inject constructor(
     }
 
     fun setShowAddDialog(show: Boolean) {
+        if (!show) {
+            _editingSessionSummary.value = null
+        }
         _showAddDialog.value = show
+    }
+
+    fun openEditSession(summary: WorkoutSessionSummary) {
+        _editingSessionSummary.value = summary
+        _showAddDialog.value = true
+    }
+
+    fun clearFilters() {
+        _timeFilter.value = TimeRangeFilter.ALL
+        _searchQuery.value = ""
+    }
+
+    fun setTodayShortcut() {
+        _timeFilter.value = TimeRangeFilter.TODAY
+        _searchQuery.value = ""
     }
 
     fun deleteSession(sessionId: String) {
@@ -184,6 +214,7 @@ class WorkoutHistoryViewModel @Inject constructor(
     fun logPastWorkout(draft: PastWorkoutLogDraft) {
         viewModelScope.launch {
             repository.logPastWorkout(draft)
+            _editingSessionSummary.value = null
             _showAddDialog.value = false
         }
     }

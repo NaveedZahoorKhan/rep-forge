@@ -275,4 +275,104 @@ class WorkoutHistoryTest {
 
         collectJob.cancel()
     }
+
+    @Test
+    fun `WorkoutHistoryViewModel setTodayShortcut and clearFilters update state`() = runTest(testDispatcher) {
+        val now = System.currentTimeMillis()
+        val mockSummaries = listOf(
+            WorkoutSessionSummary(
+                session = WorkoutSessionEntity(id = "s1", workoutId = "w1", workoutName = "Today Workout", startedAt = now - 3600000, endedAt = now),
+                completedAt = now,
+                durationFormatted = "60m",
+                totalVolumeKg = 3000.0,
+                completedSetsCount = 5,
+                totalRepsCount = 50,
+                exerciseSummaries = emptyList(),
+            ),
+            WorkoutSessionSummary(
+                session = WorkoutSessionEntity(id = "s2", workoutId = "w2", workoutName = "Old Workout", startedAt = now - 864000000, endedAt = now - 864000000 + 3600000),
+                completedAt = now - 864000000,
+                durationFormatted = "60m",
+                totalVolumeKg = 2000.0,
+                completedSetsCount = 4,
+                totalRepsCount = 40,
+                exerciseSummaries = emptyList(),
+            )
+        )
+
+        val dummyRepo = Proxy.newProxyInstance(
+            GymRepository::class.java.classLoader,
+            arrayOf(GymRepository::class.java),
+        ) { _, method, args ->
+            when (method.name) {
+                "observeCompletedSessionSummaries" -> flowOf(mockSummaries)
+                "observeExercises" -> flowOf(emptyList<ExerciseEntity>())
+                "observeExerciseVolumeOverTime" -> flowOf(emptyList<ExerciseVolumePoint>())
+                else -> null
+            }
+        } as GymRepository
+
+        val viewModel = WorkoutHistoryViewModel(dummyRepo)
+        val collectJob = launch(testDispatcher) {
+            viewModel.uiState.collect { }
+        }
+        runCurrent()
+
+        assertEquals(2, viewModel.uiState.value.filteredSummaries.size)
+
+        // Apply Today shortcut
+        viewModel.setTodayShortcut()
+        runCurrent()
+        assertEquals(TimeRangeFilter.TODAY, viewModel.uiState.value.timeFilter)
+        assertEquals(1, viewModel.uiState.value.filteredSummaries.size)
+        assertEquals("Today Workout", viewModel.uiState.value.filteredSummaries[0].session.workoutName)
+
+        // Clear filters
+        viewModel.clearFilters()
+        runCurrent()
+        assertEquals(TimeRangeFilter.ALL, viewModel.uiState.value.timeFilter)
+        assertEquals(2, viewModel.uiState.value.filteredSummaries.size)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `openEditSession sets editingSessionSummary and opens dialog`() = runTest(testDispatcher) {
+        val dummyRepo = Proxy.newProxyInstance(
+            GymRepository::class.java.classLoader,
+            arrayOf(GymRepository::class.java),
+        ) { _, method, args ->
+            when (method.name) {
+                "observeCompletedSessionSummaries" -> flowOf(emptyList<WorkoutSessionSummary>())
+                "observeExercises" -> flowOf(emptyList<ExerciseEntity>())
+                "observeExerciseVolumeOverTime" -> flowOf(emptyList<ExerciseVolumePoint>())
+                else -> null
+            }
+        } as GymRepository
+
+        val viewModel = WorkoutHistoryViewModel(dummyRepo)
+        val collectJob = launch(testDispatcher) {
+            viewModel.uiState.collect { }
+        }
+        runCurrent()
+
+        val summaryToEdit = WorkoutSessionSummary(
+            session = WorkoutSessionEntity(id = "sess_edit_1", workoutId = "w1", workoutName = "Chest Session", startedAt = 1000L, endedAt = 3600L),
+            completedAt = 3600L,
+            durationFormatted = "60m",
+            totalVolumeKg = 2500.0,
+            completedSetsCount = 8,
+            totalRepsCount = 80,
+            exerciseSummaries = emptyList(),
+        )
+
+        viewModel.openEditSession(summaryToEdit)
+        runCurrent()
+
+        assertTrue(viewModel.uiState.value.showAddPastWorkoutDialog)
+        assertNotNull(viewModel.uiState.value.editingSessionSummary)
+        assertEquals("sess_edit_1", viewModel.uiState.value.editingSessionSummary?.session?.id)
+
+        collectJob.cancel()
+    }
 }
