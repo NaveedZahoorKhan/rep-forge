@@ -24,9 +24,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.DirectionsRun
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Pause
@@ -35,6 +37,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Whatshot
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -50,6 +53,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -57,12 +61,19 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -74,6 +85,90 @@ import com.gymtracker.app.domain.model.WarmUpMovement
 import com.gymtracker.app.notification.WorkoutSoundPlayer
 import kotlinx.coroutines.delay
 
+class WarmUpPlayerStateHolder(
+    val routine: DynamicWarmUpRoutine,
+    initialIndex: Int = 0,
+    initialCompleted: Set<Int> = emptySet(),
+    initialSkipped: Set<Int> = emptySet(),
+) {
+    var currentIndex by mutableIntStateOf(initialIndex)
+    var completedIndices by mutableStateOf(initialCompleted)
+    var skippedIndices by mutableStateOf(initialSkipped)
+    var showExitConfirmation by mutableStateOf(false)
+
+    val totalMovements: Int get() = routine.movements.size
+    val currentMovement: WarmUpMovement? get() = routine.movements.getOrNull(currentIndex)
+
+    val completedCount: Int get() = completedIndices.size
+    val skippedCount: Int get() = skippedIndices.size
+    val processedCount: Int get() = (completedIndices + skippedIndices).size
+    val remainingCount: Int get() = (totalMovements - processedCount).coerceAtLeast(0)
+
+    val isCompleted: Boolean get() = totalMovements > 0 && processedCount == totalMovements
+    val progressFraction: Float get() = if (totalMovements > 0) processedCount.toFloat() / totalMovements else 0f
+
+    val nextIncompleteIndex: Int?
+        get() {
+            val processed = completedIndices + skippedIndices
+            return ((currentIndex + 1 until totalMovements) + (0 until currentIndex))
+                .firstOrNull { it !in processed }
+        }
+
+    val prevMovement: WarmUpMovement? get() = routine.movements.getOrNull(currentIndex - 1)
+    val nextMovement: WarmUpMovement? get() = nextIncompleteIndex?.let { routine.movements.getOrNull(it) }
+
+    fun markCurrentDone() {
+        if (currentIndex in 0 until totalMovements) {
+            completedIndices = completedIndices + currentIndex
+            skippedIndices = skippedIndices - currentIndex
+            val next = nextIncompleteIndex
+            if (next != null) {
+                currentIndex = next
+            }
+        }
+    }
+
+    fun markCurrentSkipped() {
+        if (currentIndex in 0 until totalMovements) {
+            skippedIndices = skippedIndices + currentIndex
+            completedIndices = completedIndices - currentIndex
+            val next = nextIncompleteIndex
+            if (next != null) {
+                currentIndex = next
+            }
+        }
+    }
+
+    fun goToPrevious() {
+        if (currentIndex > 0) {
+            currentIndex -= 1
+        }
+    }
+
+    fun jumpToStep(index: Int) {
+        if (index in 0 until totalMovements) {
+            currentIndex = index
+        }
+    }
+
+    fun requestExit(onDirectExit: () -> Unit) {
+        if (!isCompleted && processedCount < totalMovements && totalMovements > 0) {
+            showExitConfirmation = true
+        } else {
+            onDirectExit()
+        }
+    }
+
+    fun confirmExit(onConfirmed: () -> Unit) {
+        showExitConfirmation = false
+        onConfirmed()
+    }
+
+    fun dismissExitConfirmation() {
+        showExitConfirmation = false
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DynamicWarmUpPlayerModal(
@@ -82,6 +177,7 @@ fun DynamicWarmUpPlayerModal(
     onDismiss: () -> Unit,
     onStartWorkout: ((workoutId: String) -> Unit)? = null,
     targetWorkoutId: String = "",
+    isFromActiveWorkout: Boolean = false,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -98,6 +194,7 @@ fun DynamicWarmUpPlayerModal(
             onDismiss = onDismiss,
             onStartWorkout = onStartWorkout,
             targetWorkoutId = targetWorkoutId,
+            isFromActiveWorkout = isFromActiveWorkout,
         )
     }
 }
@@ -109,26 +206,90 @@ fun DynamicWarmUpPlayerContent(
     onDismiss: () -> Unit,
     onStartWorkout: ((workoutId: String) -> Unit)? = null,
     targetWorkoutId: String = "",
+    isFromActiveWorkout: Boolean = false,
 ) {
-    var currentIndex by remember(routine) { mutableIntStateOf(0) }
-    var completedMovementIndices by remember(routine) { mutableStateOf(emptySet<Int>()) }
+    var currentIndex by rememberSaveable(routine.id) { mutableIntStateOf(0) }
+    var completedIndices by rememberSaveable(routine.id) { mutableStateOf(emptySet<Int>()) }
+    var skippedIndices by rememberSaveable(routine.id) { mutableStateOf(emptySet<Int>()) }
+    var showExitConfirmation by rememberSaveable(routine.id) { mutableStateOf(false) }
+
     val amberFire = Color(0xFFFF6F00)
 
-    val currentMovement = routine.movements.getOrNull(currentIndex)
-    val totalMovements = routine.movements.size
-    val completedMovements = completedMovementIndices.size
-    val isCompleted = totalMovements > 0 && completedMovements == totalMovements
-    val progress = if (totalMovements > 0) completedMovements.toFloat() / totalMovements else 0f
+    val state = remember(routine, currentIndex, completedIndices, skippedIndices, showExitConfirmation) {
+        WarmUpPlayerStateHolder(
+            routine = routine,
+            initialIndex = currentIndex,
+            initialCompleted = completedIndices,
+            initialSkipped = skippedIndices,
+        ).apply {
+            this.showExitConfirmation = showExitConfirmation
+        }
+    }
 
-    val prevMovement = routine.movements.getOrNull(currentIndex - 1)
-    val nextIncompleteIndex = ((currentIndex + 1 until totalMovements) + (0 until currentIndex))
-        .firstOrNull { it !in completedMovementIndices }
-    val nextMovement = nextIncompleteIndex?.let(routine.movements::get)
+    // Sync back state changes
+    LaunchedEffect(state.currentIndex, state.completedIndices, state.skippedIndices, state.showExitConfirmation) {
+        currentIndex = state.currentIndex
+        completedIndices = state.completedIndices
+        skippedIndices = state.skippedIndices
+        showExitConfirmation = state.showExitConfirmation
+    }
+
+    val totalMovements = state.totalMovements
+    val currentMovement = state.currentMovement
+
+    // Exit Confirmation Dialog
+    if (state.showExitConfirmation) {
+        AlertDialog(
+            onDismissRequest = { state.dismissExitConfirmation() },
+            title = {
+                Text(
+                    text = "Exit Warm-Up?",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "You have ${state.remainingCount} remaining movements out of $totalMovements in this dynamic warm-up.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        text = "• Completed: ${state.completedCount}\n• Skipped: ${state.skippedCount}\n• Remaining: ${state.remainingCount}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        state.confirmExit(onDismiss)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .testTag("confirm_exit_warmup_btn"),
+                ) {
+                    Text("Exit Warm-Up", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { state.dismissExitConfirmation() },
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
+                    Text("Return to Warm-Up")
+                }
+            },
+            modifier = Modifier.testTag("warmup_exit_dialog"),
+        )
+    }
 
     // Timer state for timed movements
     val totalSeconds = currentMovement?.durationSeconds ?: 0
-    var secondsRemaining by remember(currentMovement) { mutableIntStateOf(totalSeconds) }
-    var isTimerRunning by remember(currentMovement) { mutableStateOf(false) }
+    var secondsRemaining by rememberSaveable(currentMovement?.id) { mutableIntStateOf(totalSeconds) }
+    var isTimerRunning by rememberSaveable(currentMovement?.id) { mutableStateOf(false) }
 
     LaunchedEffect(isTimerRunning, secondsRemaining, currentMovement) {
         if (isTimerRunning && secondsRemaining > 0) {
@@ -158,6 +319,7 @@ fun DynamicWarmUpPlayerContent(
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f, fill = false),
             ) {
                 Box(
                     modifier = Modifier
@@ -168,7 +330,7 @@ fun DynamicWarmUpPlayerContent(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Whatshot,
-                        contentDescription = null,
+                        contentDescription = "Warm-up Routine",
                         tint = amberFire,
                         modifier = Modifier.size(20.dp),
                     )
@@ -179,6 +341,8 @@ fun DynamicWarmUpPlayerContent(
                         text = routine.title,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     Text(
                         text = "Targeting ${routine.primaryMuscleGroup.label()} • ~${routine.estimatedDurationMinutes} mins",
@@ -189,46 +353,131 @@ fun DynamicWarmUpPlayerContent(
             }
 
             IconButton(
-                onClick = onDismiss,
-                modifier = Modifier.testTag("warmup_player_close_btn"),
+                onClick = { state.requestExit(onDismiss) },
+                modifier = Modifier
+                    .size(48.dp)
+                    .testTag("warmup_player_close_btn")
+                    .semantics {
+                        contentDescription = "Close Warm-Up"
+                        role = Role.Button
+                    },
             ) {
                 Icon(Icons.Default.Close, contentDescription = "Close Warm-Up")
             }
         }
 
-        // Progress bar
+        // Empty Warm-Up State
+        if (totalMovements == 0) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.FitnessCenter,
+                        contentDescription = null,
+                        modifier = Modifier.size(40.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = "No Warm-Up Movements Available",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
+                    )
+                    Text(
+                        text = "This routine does not contain any warm-up movements.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                    Button(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp),
+                        shape = RoundedCornerShape(10.dp),
+                    ) {
+                        Text("Close Warm-Up", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+            return@Column
+        }
+
+        // Overall Progress Bar
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = if (isCompleted) "Completed!" else "Movement ${currentIndex + 1} of $totalMovements",
-                    style = MaterialTheme.typography.labelSmall,
+                    text = if (state.isCompleted) {
+                        "All Movements Processed!"
+                    } else {
+                        "Step ${state.currentIndex + 1} of $totalMovements"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
                     color = amberFire,
                 )
                 Text(
-                    text = "${(progress * 100).toInt()}%",
-                    style = MaterialTheme.typography.labelSmall,
+                    text = "${(state.progressFraction * 100).toInt()}% Done",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             LinearProgressIndicator(
-                progress = { progress },
+                progress = { state.progressFraction },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(6.dp)
-                    .clip(RoundedCornerShape(3.dp)),
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(4.dp)),
                 color = amberFire,
                 trackColor = MaterialTheme.colorScheme.surfaceVariant,
             )
+
+            // Breakdown badge
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = "Completed: ${state.completedCount}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = "Skipped: ${state.skippedCount}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = "Remaining: ${state.remainingCount}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = amberFire,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
         }
 
-        if (isCompleted) {
-            // Completion Celebration View
+        if (state.isCompleted) {
+            // Completion View
             WarmUpCompletionCelebration(
                 routine = routine,
+                completedCount = state.completedCount,
+                skippedCount = state.skippedCount,
+                isFromActiveWorkout = isFromActiveWorkout,
                 onDismiss = onDismiss,
                 onStartWorkout = onStartWorkout,
                 targetWorkoutId = targetWorkoutId,
@@ -237,7 +486,7 @@ fun DynamicWarmUpPlayerContent(
             // Active Movement View
             MovementActiveCard(
                 movement = currentMovement,
-                index = currentIndex + 1,
+                index = state.currentIndex + 1,
                 total = totalMovements,
                 secondsRemaining = secondsRemaining,
                 totalSeconds = totalSeconds,
@@ -249,120 +498,121 @@ fun DynamicWarmUpPlayerContent(
                 },
             )
 
-            // Step Navigation Controls
+            // Next Movement Preview
+            NextMovementPreviewCard(
+                nextMovement = state.nextMovement,
+                nextIndex = state.nextIncompleteIndex,
+                totalMovements = totalMovements,
+            )
+
+            // Step Navigation Controls Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 OutlinedButton(
                     onClick = {
-                        if (currentIndex > 0) {
-                            currentIndex -= 1
-                            isTimerRunning = false
-                        }
+                        state.goToPrevious()
+                        isTimerRunning = false
                     },
-                    enabled = currentIndex > 0,
+                    enabled = state.currentIndex > 0,
                     modifier = Modifier
                         .weight(1f)
-                        .heightIn(min = 48.dp),
+                        .heightIn(min = 48.dp)
+                        .semantics {
+                            contentDescription = "Previous step"
+                            role = Role.Button
+                        },
                     shape = RoundedCornerShape(10.dp),
                 ) {
                     Icon(
                         Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Previous",
-                        modifier = Modifier.size(18.dp)
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
                     )
-                    Spacer(Modifier.width(6.dp))
-                    Column(
-                        horizontalAlignment = Alignment.Start,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Text(
-                            text = "Prev",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        if (prevMovement != null) {
-                            Text(
-                                text = prevMovement.name,
-                                style = MaterialTheme.typography.labelSmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = "Prev",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        state.markCurrentSkipped()
+                        isTimerRunning = false
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .testTag("warmup_skip_btn")
+                        .semantics {
+                            contentDescription = "Skip step ${state.currentIndex + 1}"
+                            role = Role.Button
+                        },
+                    shape = RoundedCornerShape(10.dp),
+                ) {
+                    Icon(
+                        Icons.Default.FastForward,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = "Skip",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
                 }
 
                 Button(
                     onClick = {
-                        completedMovementIndices = completedMovementIndices + currentIndex
-                        if (nextIncompleteIndex != null) {
-                            currentIndex = nextIncompleteIndex
-                            isTimerRunning = false
-                        } else {
+                        state.markCurrentDone()
+                        isTimerRunning = false
+                        if (state.isCompleted) {
                             soundPlayer.playRestCompleteSound()
                             soundPlayer.vibrateRestComplete()
                         }
                     },
                     modifier = Modifier
-                        .weight(1.3f)
+                        .weight(1.4f)
                         .heightIn(min = 48.dp)
-                        .testTag("warmup_next_done_btn"),
+                        .testTag("warmup_next_done_btn")
+                        .semantics {
+                            contentDescription = if (state.nextIncompleteIndex != null) "Complete movement and advance to next step" else "Finish warm-up routine"
+                            role = Role.Button
+                        },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = amberFire,
                         contentColor = Color.White,
                     ),
                     shape = RoundedCornerShape(10.dp),
                 ) {
-                    if (nextIncompleteIndex != null) {
-                        Column(
-                            horizontalAlignment = Alignment.End,
-                            verticalArrangement = Arrangement.Center,
-                            modifier = Modifier.weight(1f, fill = false)
-                        ) {
-                            Text(
-                                text = "Done • Next",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            if (nextMovement != null) {
-                                Text(
-                                    text = nextMovement.name,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    color = Color.White.copy(alpha = 0.85f)
-                                )
-                            }
-                        }
-                        Spacer(Modifier.width(6.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
                         Icon(
-                            Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = "Next",
-                            modifier = Modifier.size(18.dp)
-                        )
-                    } else {
-                        Icon(
-                            Icons.Default.CheckCircle,
+                            imageVector = if (state.nextIncompleteIndex != null) Icons.AutoMirrored.Filled.ArrowForward else Icons.Default.CheckCircle,
                             contentDescription = null,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(18.dp),
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            text = "Finish Warm-Up",
+                            text = if (state.nextIncompleteIndex != null) "Done • Next" else "Finish Warm-Up",
                             fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.labelLarge
+                            style = MaterialTheme.typography.labelLarge,
                         )
                     }
                 }
             }
 
-            // Quick Jump Carousel
+            // Quick Jump Step Indicators
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
-                    "All Routine Movements:",
+                    text = "Routine Steps Progress:",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = FontWeight.SemiBold,
@@ -374,50 +624,76 @@ fun DynamicWarmUpPlayerContent(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     routine.movements.forEachIndexed { i, m ->
-                        val isCurr = i == currentIndex
-                        val isDone = i in completedMovementIndices
+                        val isCurr = i == state.currentIndex
+                        val isDone = i in state.completedIndices
+                        val isSkipped = i in state.skippedIndices
+
+                        val statusLabel = when {
+                            isDone -> "Completed"
+                            isSkipped -> "Skipped"
+                            isCurr -> "Current"
+                            else -> "Pending"
+                        }
+
                         Surface(
                             onClick = {
-                                currentIndex = i
+                                state.jumpToStep(i)
                                 isTimerRunning = false
                             },
                             shape = RoundedCornerShape(10.dp),
                             color = when {
                                 isCurr -> amberFire.copy(alpha = 0.2f)
-                                isDone -> MaterialTheme.colorScheme.surfaceVariant
-                                else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                isDone -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                                isSkipped -> MaterialTheme.colorScheme.surfaceVariant
+                                else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
                             },
                             border = if (isCurr) BorderStroke(1.5.dp, amberFire) else null,
-                            modifier = Modifier.heightIn(min = 48.dp),
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .semantics {
+                                    contentDescription = "Step ${i + 1}: ${m.name}, $statusLabel"
+                                    role = Role.Button
+                                },
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
-                                if (isDone) {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = "Completed",
-                                        tint = amberFire,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                } else {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(18.dp)
-                                            .clip(CircleShape)
-                                            .background(
-                                                if (isCurr) amberFire else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
-                                            ),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        Text(
-                                            text = "${i + 1}",
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (isCurr) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            fontSize = 11.sp,
+                                when {
+                                    isDone -> {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = "Completed",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp),
                                         )
+                                    }
+                                    isSkipped -> {
+                                        Icon(
+                                            imageVector = Icons.Default.FastForward,
+                                            contentDescription = "Skipped",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                    }
+                                    else -> {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(20.dp)
+                                                .clip(CircleShape)
+                                                .background(
+                                                    if (isCurr) amberFire else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f),
+                                                ),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Text(
+                                                text = "${i + 1}",
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isCurr) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                fontSize = 11.sp,
+                                            )
+                                        }
                                     }
                                 }
                                 Text(
@@ -425,10 +701,67 @@ fun DynamicWarmUpPlayerContent(
                                     fontWeight = if (isCurr) FontWeight.Bold else FontWeight.Medium,
                                     color = if (isCurr) amberFire else MaterialTheme.colorScheme.onSurface,
                                     fontSize = 12.sp,
+                                    maxLines = 1,
                                 )
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NextMovementPreviewCard(
+    nextMovement: WarmUpMovement?,
+    nextIndex: Int?,
+    totalMovements: Int,
+) {
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (nextIndex != null) "NEXT MOVEMENT (Step ${nextIndex + 1} of $totalMovements)" else "FINAL MOVEMENT",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    letterSpacing = 0.5.sp,
+                )
+                Text(
+                    text = nextMovement?.name ?: "All remaining movements completed",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            if (nextMovement != null) {
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                ) {
+                    Text(
+                        text = when {
+                            nextMovement.durationSeconds != null -> "${nextMovement.durationSeconds}s"
+                            nextMovement.isPerSide -> "${nextMovement.reps ?: 10}/side"
+                            else -> "${nextMovement.reps ?: 10} reps"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
                 }
             }
         }
@@ -465,17 +798,22 @@ private fun MovementActiveCard(
                 verticalAlignment = Alignment.Top,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Surface(
-                        shape = RoundedCornerShape(4.dp),
-                        color = amberFire.copy(alpha = 0.15f),
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            text = movement.badgeType.name.replace('_', ' '),
-                            color = amberFire,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                        )
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = amberFire.copy(alpha = 0.15f),
+                        ) {
+                            Text(
+                                text = "STEP $index OF $total • ${movement.badgeType.name.replace('_', ' ')}",
+                                color = amberFire,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            )
+                        }
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -559,6 +897,7 @@ private fun MovementActiveCard(
                                     text = "$secondsRemaining",
                                     fontSize = 28.sp,
                                     fontWeight = FontWeight.ExtraBold,
+                                    fontFamily = FontFamily.Monospace,
                                     color = if (secondsRemaining == 0) MaterialTheme.colorScheme.error else amberFire,
                                 )
                                 Text("sec", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -572,11 +911,16 @@ private fun MovementActiveCard(
                                     containerColor = if (isTimerRunning) MaterialTheme.colorScheme.secondary else amberFire,
                                 ),
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.heightIn(min = 48.dp),
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .semantics {
+                                        contentDescription = if (isTimerRunning) "Pause countdown timer" else "Start countdown timer"
+                                        role = Role.Button
+                                    },
                             ) {
                                 Icon(
                                     imageVector = if (isTimerRunning) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                    contentDescription = if (isTimerRunning) "Pause" else "Start",
+                                    contentDescription = null,
                                     modifier = Modifier.size(16.dp),
                                 )
                                 Spacer(Modifier.width(6.dp))
@@ -586,9 +930,14 @@ private fun MovementActiveCard(
                             OutlinedButton(
                                 onClick = onResetTimer,
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.heightIn(min = 48.dp),
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .semantics {
+                                        contentDescription = "Reset timer"
+                                        role = Role.Button
+                                    },
                             ) {
-                                Icon(Icons.Default.Refresh, contentDescription = "Reset", modifier = Modifier.size(16.dp))
+                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(4.dp))
                                 Text("Reset")
                             }
@@ -639,6 +988,7 @@ private fun MovementActiveCard(
                                     fontWeight = FontWeight.ExtraBold,
                                     color = amberFire,
                                     fontSize = 18.sp,
+                                    fontFamily = FontFamily.Monospace,
                                 )
                             }
                         }
@@ -646,7 +996,7 @@ private fun MovementActiveCard(
                 }
             }
 
-            // Step-by-Step Instructions
+            // Step-by-Step Instructions (Useful Text Instructions, No Decorative Image Needed)
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
                     text = "How to Execute:",
@@ -706,6 +1056,9 @@ private fun MovementActiveCard(
 @Composable
 private fun WarmUpCompletionCelebration(
     routine: DynamicWarmUpRoutine,
+    completedCount: Int,
+    skippedCount: Int,
+    isFromActiveWorkout: Boolean,
     onDismiss: () -> Unit,
     onStartWorkout: ((workoutId: String) -> Unit)?,
     targetWorkoutId: String,
@@ -748,49 +1101,64 @@ private fun WarmUpCompletionCelebration(
             )
 
             Text(
-                text = "Your core temperature is elevated, joint capsules are bathed in synovial fluid, and your nervous system is primed to recruit maximal motor units for ${routine.primaryMuscleGroup.label()}!",
+                text = "Your core temperature is elevated, joint capsules are bathed in synovial fluid, and your nervous system is primed for ${routine.primaryMuscleGroup.label()}!",
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 lineHeight = 22.sp,
             )
 
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-            // Short summary of completed movements
-            Column(
+            // Progress Summary Row
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                 modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(
-                    text = "Summary (${routine.movements.size} Movements Finished):",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = amberFire,
-                )
-                routine.movements.forEachIndexed { idx, m ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = null,
-                            tint = amberFire,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Text(
-                            text = "${idx + 1}. ${m.name}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceAround,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("COMPLETED", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        Text("$completedCount", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                    }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("SKIPPED", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
+                        Text("$skippedCount", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
                     }
                 }
             }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-            if (targetWorkoutId.isNotBlank() && onStartWorkout != null) {
+            if (isFromActiveWorkout) {
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .testTag("warmup_return_to_workout_btn")
+                        .semantics {
+                            contentDescription = "Return to workout"
+                            role = Role.Button
+                        },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = amberFire,
+                        contentColor = Color.White,
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.DirectionsRun, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = "⚡ Return to Active Workout",
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            } else if (targetWorkoutId.isNotBlank() && onStartWorkout != null) {
                 Button(
                     onClick = {
                         onDismiss()
@@ -799,7 +1167,11 @@ private fun WarmUpCompletionCelebration(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 48.dp)
-                        .testTag("warmup_start_workout_now_btn"),
+                        .testTag("warmup_start_workout_now_btn")
+                        .semantics {
+                            contentDescription = "Start workout"
+                            role = Role.Button
+                        },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = amberFire,
                         contentColor = Color.White,
@@ -823,10 +1195,14 @@ private fun WarmUpCompletionCelebration(
                 onClick = onDismiss,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 48.dp),
+                    .heightIn(min = 48.dp)
+                    .semantics {
+                        contentDescription = "Return to Workouts"
+                        role = Role.Button
+                    },
                 shape = RoundedCornerShape(10.dp),
             ) {
-                Text("Done")
+                Text(if (isFromActiveWorkout) "Close" else "Return to Routines")
             }
         }
     }

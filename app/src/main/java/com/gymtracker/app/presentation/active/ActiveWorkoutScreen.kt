@@ -877,6 +877,7 @@ fun ActiveWorkoutRouteScreen(
             onDismiss = { showWarmUpModal = false },
             onStartWorkout = { showWarmUpModal = false },
             targetWorkoutId = activeSession?.workoutId.orEmpty(),
+            isFromActiveWorkout = true,
         )
     }
 }
