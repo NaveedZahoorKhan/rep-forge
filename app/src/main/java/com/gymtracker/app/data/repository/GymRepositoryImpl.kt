@@ -26,6 +26,7 @@ import com.gymtracker.app.data.local.entity.SetType
 import com.gymtracker.app.data.local.entity.UserHealthProfileEntity
 import com.gymtracker.app.data.local.entity.UserProfileEntity
 import com.gymtracker.app.data.local.entity.WaterLogEntity
+import com.gymtracker.app.data.local.entity.WeekDay
 import com.gymtracker.app.data.local.entity.WeeklyScheduleEntity
 import com.gymtracker.app.data.local.entity.WeightLogEntity
 import com.gymtracker.app.data.local.entity.WorkoutEntity
@@ -763,6 +764,14 @@ class GymRepositoryImpl @Inject constructor(
 
     override suspend fun upsertSchedule(schedule: WeeklyScheduleEntity) {
         dao.upsertSchedule(schedule)
+    }
+
+    override suspend fun deleteSchedule(id: String) {
+        dao.deleteSchedule(id)
+    }
+
+    override suspend fun deleteScheduleForDay(weekDay: WeekDay) {
+        dao.deleteScheduleForDay(weekDay)
     }
 
     override suspend fun upsertReminder(reminder: ReminderEntity) {

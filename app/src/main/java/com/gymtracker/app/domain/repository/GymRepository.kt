@@ -92,6 +92,8 @@ interface GymRepository {
     suspend fun addWeightLog(weight: WeightLogEntity)
     suspend fun deleteWeightLog(id: String)
     suspend fun upsertSchedule(schedule: WeeklyScheduleEntity)
+    suspend fun deleteSchedule(id: String)
+    suspend fun deleteScheduleForDay(weekDay: com.gymtracker.app.data.local.entity.WeekDay)
     suspend fun upsertReminder(reminder: ReminderEntity)
     suspend fun deleteReminder(id: String)
     suspend fun exportJson(): String

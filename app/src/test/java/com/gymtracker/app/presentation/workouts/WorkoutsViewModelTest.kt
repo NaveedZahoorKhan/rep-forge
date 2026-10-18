@@ -5,6 +5,7 @@ import com.gymtracker.app.data.local.entity.Equipment
 import com.gymtracker.app.data.local.entity.ExerciseEntity
 import com.gymtracker.app.data.local.entity.MuscleGroup
 import com.gymtracker.app.data.local.entity.UserProfileEntity
+import com.gymtracker.app.data.local.entity.WeekDay
 import com.gymtracker.app.data.local.entity.WeeklyScheduleEntity
 import com.gymtracker.app.data.local.entity.WorkoutEntity
 import com.gymtracker.app.domain.model.WorkoutDraft
@@ -306,5 +307,90 @@ class WorkoutsViewModelTest {
 
         assertEquals(1, newlySelected.size)
         assertEquals("e2", newlySelected.first())
+    }
+
+    @Test
+    fun `assignWorkoutToDay deletes existing schedule for day and upserts new schedule entity`() = runTest(testDispatcher) {
+        var deletedDay: WeekDay? = null
+        var upsertedSchedule: WeeklyScheduleEntity? = null
+
+        val repo = createMockInterface<GymRepository> { methodName, args ->
+            when (methodName) {
+                "deleteScheduleForDay" -> {
+                    deletedDay = args?.get(0) as? WeekDay
+                    Unit
+                }
+                "upsertSchedule" -> {
+                    upsertedSchedule = args?.get(0) as? WeeklyScheduleEntity
+                    Unit
+                }
+                else -> null
+            }
+        }
+        val soundPlayer = createMockInterface<WorkoutSoundPlayer>()
+        val viewModel = WorkoutsViewModel(repo, soundPlayer)
+
+        viewModel.assignWorkoutToDay(WeekDay.MONDAY, "w1", "Push Day A")
+        runCurrent()
+
+        assertEquals(WeekDay.MONDAY, deletedDay)
+        assertEquals(WeekDay.MONDAY, upsertedSchedule?.weekDay)
+        assertEquals("w1", upsertedSchedule?.workoutId)
+        assertEquals("Push Day A", upsertedSchedule?.workoutName)
+    }
+
+    @Test
+    fun `removeSchedule calls repository deleteSchedule with correct ID`() = runTest(testDispatcher) {
+        var deletedScheduleId: String? = null
+
+        val repo = createMockInterface<GymRepository> { methodName, args ->
+            if (methodName == "deleteSchedule") {
+                deletedScheduleId = args?.get(0) as? String
+                Unit
+            } else null
+        }
+        val soundPlayer = createMockInterface<WorkoutSoundPlayer>()
+        val viewModel = WorkoutsViewModel(repo, soundPlayer)
+
+        viewModel.removeSchedule("sched-999")
+        runCurrent()
+
+        assertEquals("sched-999", deletedScheduleId)
+    }
+
+    @Test
+    fun `rescheduleWorkout deletes old schedule and target day schedule before upserting new schedule`() = runTest(testDispatcher) {
+        var deletedScheduleId: String? = null
+        var deletedTargetDay: WeekDay? = null
+        var upsertedSchedule: WeeklyScheduleEntity? = null
+
+        val repo = createMockInterface<GymRepository> { methodName, args ->
+            when (methodName) {
+                "deleteSchedule" -> {
+                    deletedScheduleId = args?.get(0) as? String
+                    Unit
+                }
+                "deleteScheduleForDay" -> {
+                    deletedTargetDay = args?.get(0) as? WeekDay
+                    Unit
+                }
+                "upsertSchedule" -> {
+                    upsertedSchedule = args?.get(0) as? WeeklyScheduleEntity
+                    Unit
+                }
+                else -> null
+            }
+        }
+        val soundPlayer = createMockInterface<WorkoutSoundPlayer>()
+        val viewModel = WorkoutsViewModel(repo, soundPlayer)
+
+        viewModel.rescheduleWorkout("sched-100", WeekDay.MONDAY, WeekDay.FRIDAY, "w3", "Leg Day A")
+        runCurrent()
+
+        assertEquals("sched-100", deletedScheduleId)
+        assertEquals(WeekDay.FRIDAY, deletedTargetDay)
+        assertEquals(WeekDay.FRIDAY, upsertedSchedule?.weekDay)
+        assertEquals("w3", upsertedSchedule?.workoutId)
+        assertEquals("Leg Day A", upsertedSchedule?.workoutName)
     }
 }

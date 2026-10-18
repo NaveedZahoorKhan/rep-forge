@@ -25,13 +25,21 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import com.gymtracker.app.data.local.entity.SessionStatus
+import java.time.Instant
+import java.time.ZoneId
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -39,6 +47,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material3.AlertDialog
@@ -67,6 +76,8 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import com.gymtracker.app.presentation.warmup.DynamicWarmUpPlayerModal
+import com.gymtracker.app.presentation.history.WorkoutHistoryScreen
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -100,6 +111,7 @@ import com.gymtracker.app.data.local.entity.WeekDay
 import com.gymtracker.app.data.local.entity.WeeklyScheduleEntity
 import com.gymtracker.app.data.local.entity.WorkoutEntity
 import com.gymtracker.app.data.local.entity.label
+import com.gymtracker.app.data.local.entity.WorkoutSessionEntity
 import com.gymtracker.app.domain.model.DynamicWarmUpRoutine
 import com.gymtracker.app.domain.model.WorkoutDraft
 import com.gymtracker.app.domain.model.WorkoutExerciseDraft
@@ -161,6 +173,7 @@ data class WorkoutsUiState(
     val workouts: List<WorkoutEntity> = emptyList(),
     val exercises: List<ExerciseEntity> = emptyList(),
     val schedule: List<WeeklyScheduleEntity> = emptyList(),
+    val historySessions: List<WorkoutSessionEntity> = emptyList(),
     val profile: UserProfileEntity = UserProfileEntity(),
 )
 
@@ -173,12 +186,14 @@ class WorkoutsViewModel @Inject constructor(
         repository.observeWorkouts(),
         repository.observeExercises(),
         repository.observeWeeklySchedule(),
+        repository.observeHistory(),
         repository.observeUserProfile(),
-    ) { workouts, exercises, schedule, profile ->
+    ) { workouts, exercises, schedule, history, profile ->
         WorkoutsUiState(
             workouts = workouts,
             exercises = exercises,
             schedule = schedule,
+            historySessions = history,
             profile = profile ?: UserProfileEntity(),
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), WorkoutsUiState())
@@ -194,6 +209,39 @@ class WorkoutsViewModel @Inject constructor(
             repository.applyRoutineSplitSchedule(splitName)
             val currentProfile = repository.observeUserProfile().first() ?: UserProfileEntity()
             repository.createOrUpdateProfile(currentProfile.copy(preferredSplit = splitName))
+        }
+    }
+
+    fun assignWorkoutToDay(weekDay: WeekDay, workoutId: String, workoutName: String) {
+        viewModelScope.launch {
+            repository.deleteScheduleForDay(weekDay)
+            val entity = WeeklyScheduleEntity(
+                id = java.util.UUID.randomUUID().toString(),
+                weekDay = weekDay,
+                workoutId = workoutId,
+                workoutName = workoutName,
+            )
+            repository.upsertSchedule(entity)
+        }
+    }
+
+    fun removeSchedule(scheduleId: String) {
+        viewModelScope.launch {
+            repository.deleteSchedule(scheduleId)
+        }
+    }
+
+    fun rescheduleWorkout(scheduleId: String, currentWeekDay: WeekDay, targetWeekDay: WeekDay, workoutId: String, workoutName: String) {
+        viewModelScope.launch {
+            repository.deleteSchedule(scheduleId)
+            repository.deleteScheduleForDay(targetWeekDay)
+            val entity = WeeklyScheduleEntity(
+                id = java.util.UUID.randomUUID().toString(),
+                weekDay = targetWeekDay,
+                workoutId = workoutId,
+                workoutName = workoutName,
+            )
+            repository.upsertSchedule(entity)
         }
     }
 }
@@ -258,10 +306,14 @@ fun WorkoutsScreen(
                     schedule = state.schedule,
                     workouts = state.workouts,
                     exercises = state.exercises,
+                    historySessions = state.historySessions,
                     currentSplit = state.profile.preferredSplit,
                     onStartWorkout = onStartWorkout,
                     onApplySplit = { viewModel.applySplit(it) },
                     onStartWarmUp = { activeWarmUpRoutine = it },
+                    onAssignWorkout = { weekDay, wId, wName -> viewModel.assignWorkoutToDay(weekDay, wId, wName) },
+                    onRemoveSchedule = { sId -> viewModel.removeSchedule(sId) },
+                    onRescheduleWorkout = { sId, curDay, targetDay, wId, wName -> viewModel.rescheduleWorkout(sId, curDay, targetDay, wId, wName) },
                 )
             }
         }
@@ -1190,10 +1242,14 @@ private fun PlannerPanel(
     schedule: List<WeeklyScheduleEntity>,
     workouts: List<WorkoutEntity>,
     exercises: List<ExerciseEntity>,
+    historySessions: List<WorkoutSessionEntity>,
     currentSplit: String,
     onStartWorkout: (String) -> Unit,
     onApplySplit: (String) -> Unit,
     onStartWarmUp: (DynamicWarmUpRoutine) -> Unit,
+    onAssignWorkout: (WeekDay, String, String) -> Unit,
+    onRemoveSchedule: (String) -> Unit,
+    onRescheduleWorkout: (scheduleId: String, currentWeekDay: WeekDay, targetWeekDay: WeekDay, workoutId: String, workoutName: String) -> Unit,
 ) {
     val currentSplitName = currentSplit.ifBlank { "Push Pull Legs (PPL)" }
     val splits = listOf(
@@ -1204,7 +1260,25 @@ private fun PlannerPanel(
         "Full Body Circuit",
     )
 
-    val todayWeekDay = when (LocalDate.now().dayOfWeek) {
+    var weekOffset by remember { mutableIntStateOf(0) }
+    var selectedDate by remember { mutableStateOf(LocalDate.now()) }
+
+    // Dialog state for assigning / rescheduling / removing
+    var assignWorkoutForDay by remember { mutableStateOf<WeekDay?>(null) }
+    var rescheduleScheduleItem by remember { mutableStateOf<WeeklyScheduleEntity?>(null) }
+    var removeConfirmScheduleItem by remember { mutableStateOf<WeeklyScheduleEntity?>(null) }
+
+    val todayDate = remember { LocalDate.now() }
+    val currentMonday = remember(todayDate, weekOffset) {
+        val mon = todayDate.with(java.time.temporal.TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+        mon.plusWeeks(weekOffset.toLong())
+    }
+
+    val weekDays = remember(currentMonday) {
+        (0..6).map { currentMonday.plusDays(it.toLong()) }
+    }
+
+    val selectedDayOfWeek = when (selectedDate.dayOfWeek) {
         DayOfWeek.MONDAY -> WeekDay.MONDAY
         DayOfWeek.TUESDAY -> WeekDay.TUESDAY
         DayOfWeek.WEDNESDAY -> WeekDay.WEDNESDAY
@@ -1214,17 +1288,378 @@ private fun PlannerPanel(
         DayOfWeek.SUNDAY -> WeekDay.SUNDAY
     }
 
-    val weekDaysOrdered = listOf(
-        WeekDay.MONDAY,
-        WeekDay.TUESDAY,
-        WeekDay.WEDNESDAY,
-        WeekDay.THURSDAY,
-        WeekDay.FRIDAY,
-        WeekDay.SATURDAY,
-        WeekDay.SUNDAY,
-    )
+    val selectedSchedule = schedule.firstOrNull { it.weekDay == selectedDayOfWeek }
+    val selectedScheduledWorkout = selectedSchedule?.let { s ->
+        workouts.firstOrNull { it.id == s.workoutId } ?: workouts.firstOrNull { it.name.equals(s.workoutName, ignoreCase = true) }
+    }
 
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    // Find completed sessions on selectedDate
+    val selectedDayCompletedSessions = remember(historySessions, selectedDate) {
+        val startOfDay = selectedDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val endOfDay = selectedDate.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        historySessions.filter { session ->
+            val timestamp = session.endedAt ?: session.startedAt
+            timestamp in startOfDay until endOfDay && session.status == SessionStatus.COMPLETED
+        }
+    }
+
+    val dateFormatter = remember { java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d") }
+    val headerDateFormatter = remember { java.time.format.DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy") }
+    val monthYearFormatter = remember { java.time.format.DateTimeFormatter.ofPattern("MMMM yyyy") }
+
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        // Week Strip Header & Navigation
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    // Month / Year Title + Prev, Today, Next buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = currentMonday.format(monthYearFormatter),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            IconButton(
+                                onClick = {
+                                    weekOffset -= 1
+                                    selectedDate = selectedDate.minusWeeks(1)
+                                },
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous week")
+                            }
+
+                            if (weekOffset != 0) {
+                                OutlinedButton(
+                                    onClick = {
+                                        weekOffset = 0
+                                        selectedDate = LocalDate.now()
+                                    },
+                                    shape = RoundedCornerShape(16.dp),
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Text("Today", fontSize = 11.sp)
+                                }
+                            }
+
+                            IconButton(
+                                onClick = {
+                                    weekOffset += 1
+                                    selectedDate = selectedDate.plusWeeks(1)
+                                },
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next week")
+                            }
+                        }
+                    }
+
+                    // Week Strip Days (7 columns)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        weekDays.forEach { date ->
+                            val isSelected = date == selectedDate
+                            val isToday = date == todayDate
+                            val dayEnum = when (date.dayOfWeek) {
+                                DayOfWeek.MONDAY -> WeekDay.MONDAY
+                                DayOfWeek.TUESDAY -> WeekDay.TUESDAY
+                                DayOfWeek.WEDNESDAY -> WeekDay.WEDNESDAY
+                                DayOfWeek.THURSDAY -> WeekDay.THURSDAY
+                                DayOfWeek.FRIDAY -> WeekDay.FRIDAY
+                                DayOfWeek.SATURDAY -> WeekDay.SATURDAY
+                                DayOfWeek.SUNDAY -> WeekDay.SUNDAY
+                            }
+                            val daySchedule = schedule.firstOrNull { it.weekDay == dayEnum }
+                            val dayCompleted = historySessions.any { session ->
+                                val timestamp = session.endedAt ?: session.startedAt
+                                val sessionDate = Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()).toLocalDate()
+                                sessionDate == date && session.status == SessionStatus.COMPLETED
+                            }
+
+                            Surface(
+                                onClick = { selectedDate = date },
+                                shape = RoundedCornerShape(10.dp),
+                                color = when {
+                                    isSelected -> MaterialTheme.colorScheme.primary
+                                    isToday -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                                    else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                                },
+                                border = BorderStroke(
+                                    width = if (isSelected || isToday) 1.5.dp else 0.5.dp,
+                                    color = when {
+                                        isSelected -> MaterialTheme.colorScheme.primary
+                                        isToday -> MaterialTheme.colorScheme.primary
+                                        else -> MaterialTheme.colorScheme.outlineVariant
+                                    }
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(horizontal = 2.dp)
+                                    .size(width = 44.dp, height = 64.dp)
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center,
+                                    modifier = Modifier.padding(vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = date.dayOfWeek.name.take(3),
+                                        fontSize = 10.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = date.dayOfMonth.toString(),
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
+                                    )
+
+                                    // Indicator dots for status
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(top = 2.dp)
+                                    ) {
+                                        if (dayCompleted) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(5.dp)
+                                                    .background(if (isSelected) Color.White else MaterialTheme.colorScheme.tertiary, shape = RoundedCornerShape(50))
+                                            )
+                                        } else if (daySchedule != null) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(5.dp)
+                                                    .background(if (isSelected) Color.White else MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(50))
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Selected Day Vertical Agenda Header
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = selectedDate.format(headerDateFormatter),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (selectedDate == todayDate) {
+                        Text(
+                            text = "Today's Agenda",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                if (selectedSchedule == null) {
+                    Button(
+                        onClick = { assignWorkoutForDay = selectedDayOfWeek },
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Schedule Workout", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        // 1. Completed Workouts Section (if any on this day)
+        if (selectedDayCompletedSessions.isNotEmpty()) {
+            item {
+                SectionTitle("Completed Sessions")
+            }
+            items(selectedDayCompletedSessions, key = { it.id }) { session ->
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f)),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.4f))
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                Text(session.workoutName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                            }
+                            Text(
+                                text = "Completed • Duration: ${session.durationSeconds / 60}m • Volume: ${session.totalVolume.toInt()} kg",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            Text("HISTORY", fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Scheduled Routine Entry for Selected Day
+        item {
+            if (selectedSchedule != null) {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (selectedDate == todayDate) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surface
+                    ),
+                    border = BorderStroke(
+                        width = if (selectedDate == todayDate) 1.5.dp else 1.dp,
+                        color = if (selectedDate == todayDate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                    )
+                ) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text("Scheduled Routine", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(selectedSchedule.workoutName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                            }
+
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                IconButton(onClick = { rescheduleScheduleItem = selectedSchedule }, modifier = Modifier.size(48.dp)) {
+                                    Icon(Icons.Default.SwapHoriz, contentDescription = "Reschedule workout")
+                                }
+                                IconButton(onClick = { removeConfirmScheduleItem = selectedSchedule }, modifier = Modifier.size(48.dp)) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Remove schedule", tint = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+
+                        Text(
+                            text = "${selectedSchedule.periodizationType.name} periodization • Deload every ${selectedSchedule.deloadEveryWeeks} wks",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            selectedScheduledWorkout?.let { w ->
+                                val routine = remember(w, exercises) {
+                                    DynamicWarmUpCatalog.suggestRoutineForWorkout(w, exercises)
+                                }
+                                OutlinedButton(
+                                    onClick = { onStartWarmUp(routine) },
+                                    shape = RoundedCornerShape(6.dp),
+                                    border = BorderStroke(1.dp, Color(0xFFFF6F00)),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                                ) {
+                                    Icon(Icons.Default.Whatshot, contentDescription = null, tint = Color(0xFFFF6F00), modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Warm-Up (${routine.primaryMuscleGroup.name.lowercase().replaceFirstChar { it.titlecase() }})", color = Color(0xFFFF6F00), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Button(
+                                    onClick = { onStartWorkout(w.id) },
+                                    shape = RoundedCornerShape(6.dp),
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+                                    modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                                ) {
+                                    Text(if (selectedDate == todayDate) "⚡ Start Today's Workout" else "⚡ Start Workout", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if (selectedDayCompletedSessions.isEmpty()) {
+                // Empty Rest Day View (Visually quiet)
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)),
+                    border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Surface(shape = RoundedCornerShape(4.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                                    Text("REST DAY", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                                }
+                                Text("No workout scheduled", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+
+                        Text(
+                            text = "Rest days are crucial for muscle recovery, adaptation, and preventing overtraining.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    val restMobility = DynamicWarmUpCatalog.getWarmUpRoutine(MuscleGroup.FULL_BODY, workoutName = "Rest Day Mobility")
+                                    onStartWarmUp(restMobility)
+                                },
+                                shape = RoundedCornerShape(6.dp),
+                                border = BorderStroke(0.8.dp, Color(0xFFFF6F00).copy(alpha = 0.6f)),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                            ) {
+                                Icon(Icons.Default.Whatshot, contentDescription = null, tint = Color(0xFFFF6F00), modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Mobility Flow", color = Color(0xFFFF6F00), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            }
+
+                            TextButton(
+                                onClick = { assignWorkoutForDay = selectedDayOfWeek },
+                            ) {
+                                Text("Schedule Workout", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Split Configuration Collapsible Section
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -1236,12 +1671,12 @@ private fun PlannerPanel(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Active Routine Split", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text("Active Routine Split Preset", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
-                            Text("Single select", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                            Text("Preset", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                         }
                     }
-                    Text("Select a split to automatically populate your weekly workout schedule:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Selecting a split preset will overwrite your current weekly schedule:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                     splits.forEach { splitItem ->
                         val isSelected = currentSplitName.trim().equals(splitItem.trim(), ignoreCase = true)
@@ -1263,8 +1698,7 @@ private fun PlannerPanel(
                                 RadioButton(
                                     selected = isSelected,
                                     onClick = { onApplySplit(splitItem) },
-                                    colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary),
-                                    modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                                    colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
                                 )
                                 Text(splitItem, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium, fontSize = 13.sp)
                             }
@@ -1273,123 +1707,167 @@ private fun PlannerPanel(
                 }
             }
         }
+    }
 
-        item { SectionTitle("Weekly Schedule by Day") }
+    // Assign Workout Dialog
+    assignWorkoutForDay?.let { targetDay ->
+        var selectedWorkoutToAssign by remember { mutableStateOf(workouts.firstOrNull()?.id.orEmpty()) }
+        val targetDayName = targetDay.name.lowercase().replaceFirstChar { it.titlecase() }
 
-        items(weekDaysOrdered, key = { it.name }) { day ->
-            val isToday = day == todayWeekDay
-            val scheduled = schedule.firstOrNull { it.weekDay == day }
-            val workout = scheduled?.let { s ->
-                workouts.firstOrNull { it.id == s.workoutId } ?: workouts.firstOrNull { it.name.equals(s.workoutName, ignoreCase = true) }
-            }
-            val dayName = day.name.lowercase().replaceFirstChar { it.titlecase() }
+        AlertDialog(
+            onDismissRequest = { assignWorkoutForDay = null },
+            title = { Text("Schedule Workout for $targetDayName") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Selected Date: ${selectedDate.format(headerDateFormatter)}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    Text("Select a workout routine to assign:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isToday) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f) else MaterialTheme.colorScheme.surface
-                ),
-                border = BorderStroke(
-                    width = if (isToday) 2.dp else 1.dp,
-                    color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
-                )
-            ) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(dayName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
-                            if (isToday) {
-                                Surface(
-                                    shape = RoundedCornerShape(4.dp),
-                                    color = MaterialTheme.colorScheme.primary
-                                ) {
-                                    Text("TODAY", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
-                                }
-                            }
-                        }
-
-                        if (scheduled != null) {
-                            Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer
-                            ) {
-                                Text(scheduled.workoutName, fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
-                            }
-                        } else {
-                            Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant
-                            ) {
-                                Text("Rest Day", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
-                            }
-                        }
-                    }
-
-                    if (scheduled != null) {
-                        Text(
-                            "${scheduled.periodizationType.name} periodization • Deload every ${scheduled.deloadEveryWeeks} wks",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        workout?.let { w ->
-                            FlowRow(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                                verticalArrangement = Arrangement.spacedBy(6.dp),
-                            ) {
-                                val routine = remember(w, exercises) {
-                                    DynamicWarmUpCatalog.suggestRoutineForWorkout(w, exercises)
-                                }
-                                OutlinedButton(
-                                    onClick = { onStartWarmUp(routine) },
-                                    shape = RoundedCornerShape(6.dp),
-                                    border = BorderStroke(1.dp, Color(0xFFFF6F00)),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                    modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
-                                ) {
-                                    Icon(Icons.Default.Whatshot, contentDescription = null, tint = Color(0xFFFF6F00), modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("Warm-Up (${routine.primaryMuscleGroup.name.lowercase().replaceFirstChar { it.titlecase() }})", color = Color(0xFFFF6F00), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
-                                Button(
-                                    onClick = { onStartWorkout(w.id) },
-                                    shape = RoundedCornerShape(6.dp),
-                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
-                                    modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
-                                ) {
-                                    Text(if (isToday) "Start Today's Workout" else "Start Workout", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
+                    if (workouts.isEmpty()) {
+                        Text("No custom or template workouts available. Please create a workout first.", color = MaterialTheme.colorScheme.error)
                     } else {
-                        FlowRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth().size(width = 300.dp, height = 200.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Text("Active recovery, mobility, and hydration.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            OutlinedButton(
-                                onClick = {
-                                    val restMobility = DynamicWarmUpCatalog.getWarmUpRoutine(MuscleGroup.FULL_BODY, workoutName = "Rest Day Mobility")
-                                    onStartWarmUp(restMobility)
-                                },
-                                shape = RoundedCornerShape(6.dp),
-                                border = BorderStroke(0.8.dp, Color(0xFFFF6F00).copy(alpha = 0.6f)),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
-                            ) {
-                                Icon(Icons.Default.Whatshot, contentDescription = null, tint = Color(0xFFFF6F00), modifier = Modifier.size(14.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Mobility Flow", color = Color(0xFFFF6F00), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                            items(workouts, key = { it.id }) { w ->
+                                val isSelected = w.id == selectedWorkoutToAssign
+                                Surface(
+                                    onClick = { selectedWorkoutToAssign = w.id },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                    border = BorderStroke(
+                                        if (isSelected) 1.5.dp else 0.5.dp,
+                                        if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        RadioButton(selected = isSelected, onClick = { selectedWorkoutToAssign = w.id })
+                                        Column {
+                                            Text(w.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                            Text(w.splitType, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
+            },
+            confirmButton = {
+                Button(
+                    enabled = selectedWorkoutToAssign.isNotBlank(),
+                    onClick = {
+                        val chosenWorkout = workouts.firstOrNull { it.id == selectedWorkoutToAssign }
+                        if (chosenWorkout != null) {
+                            onAssignWorkout(targetDay, chosenWorkout.id, chosenWorkout.name)
+                        }
+                        assignWorkoutForDay = null
+                    }
+                ) {
+                    Text("Confirm Schedule")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { assignWorkoutForDay = null }) {
+                    Text("Cancel")
+                }
             }
-        }
+        )
+    }
+
+    // Reschedule Dialog
+    rescheduleScheduleItem?.let { currentSchedule ->
+        var selectedTargetDay by remember { mutableStateOf(currentSchedule.weekDay) }
+        val weekDaysList = WeekDay.entries
+
+        AlertDialog(
+            onDismissRequest = { rescheduleScheduleItem = null },
+            title = { Text("Reschedule '${currentSchedule.workoutName}'") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Move from ${currentSchedule.weekDay.name.lowercase().replaceFirstChar { it.titlecase() }} to another day:", style = MaterialTheme.typography.bodySmall)
+
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        weekDaysList.forEach { day ->
+                            val dayName = day.name.lowercase().replaceFirstChar { it.titlecase() }
+                            val isSelected = day == selectedTargetDay
+                            Surface(
+                                onClick = { selectedTargetDay = day },
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                border = BorderStroke(
+                                    if (isSelected) 1.5.dp else 0.5.dp,
+                                    if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    RadioButton(selected = isSelected, onClick = { selectedTargetDay = day })
+                                    Text(dayName, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium, fontSize = 13.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onRescheduleWorkout(
+                            currentSchedule.id,
+                            currentSchedule.weekDay,
+                            selectedTargetDay,
+                            currentSchedule.workoutId,
+                            currentSchedule.workoutName
+                        )
+                        rescheduleScheduleItem = null
+                    }
+                ) {
+                    Text("Confirm Reschedule")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { rescheduleScheduleItem = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Remove Confirmation Dialog
+    removeConfirmScheduleItem?.let { currentSchedule ->
+        AlertDialog(
+            onDismissRequest = { removeConfirmScheduleItem = null },
+            title = { Text("Remove Schedule") },
+            text = {
+                Text("Are you sure you want to remove '${currentSchedule.workoutName}' from ${currentSchedule.weekDay.name.lowercase().replaceFirstChar { it.titlecase() }}? The day will revert to a Rest Day.")
+            },
+            confirmButton = {
+                Button(
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    onClick = {
+                        onRemoveSchedule(currentSchedule.id)
+                        removeConfirmScheduleItem = null
+                    }
+                ) {
+                    Text("Remove")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { removeConfirmScheduleItem = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 
