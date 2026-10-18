@@ -261,14 +261,14 @@ private fun RestTimerActiveView(
             IconButton(
                 onClick = onSkip,
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(48.dp)
                     .testTag("rest_timer_skip")
             ) {
                 Icon(
                     imageVector = Icons.Default.Close,
                     contentDescription = "Skip Rest Timer",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(20.dp)
                 )
             }
         }
@@ -302,32 +302,32 @@ private fun RestTimerActiveView(
             ) {
                 FilledTonalIconButton(
                     onClick = { onSubtractSeconds(15) },
-                    modifier = Modifier.size(36.dp),
+                    modifier = Modifier.size(48.dp),
                     colors = androidx.compose.material3.IconButtonDefaults.filledTonalIconButtonColors(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant
                     )
                 ) {
-                    Text("-15", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text("-15s", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
 
                 FilledTonalIconButton(
                     onClick = { onAddSeconds(15) },
-                    modifier = Modifier.size(36.dp),
+                    modifier = Modifier.size(48.dp),
                     colors = androidx.compose.material3.IconButtonDefaults.filledTonalIconButtonColors(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant
                     )
                 ) {
-                    Text("+15", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text("+15s", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
 
                 FilledTonalButton(
                     onClick = { onAddSeconds(30) },
                     modifier = Modifier
-                        .height(36.dp)
+                        .height(48.dp)
                         .testTag("rest_timer_add_30"),
-                    contentPadding = PaddingValues(horizontal = 8.dp)
+                    contentPadding = PaddingValues(horizontal = 10.dp)
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(2.dp))
                     Text("30s", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
@@ -356,7 +356,7 @@ private fun RestTimerActiveView(
                 onClick = onToggle,
                 modifier = Modifier
                     .weight(1.5f)
-                    .height(44.dp)
+                    .height(48.dp)
                     .testTag("rest_timer_toggle"),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (isPaused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
@@ -366,7 +366,7 @@ private fun RestTimerActiveView(
                 Icon(
                     imageVector = if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
                     contentDescription = if (isPaused) "Resume Timer" else "Pause Timer",
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(20.dp)
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
@@ -381,14 +381,14 @@ private fun RestTimerActiveView(
                 onClick = onRestart,
                 modifier = Modifier
                     .weight(1f)
-                    .height(44.dp)
+                    .height(48.dp)
                     .testTag("rest_timer_restart"),
                 contentPadding = PaddingValues(horizontal = 8.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.RestartAlt,
                     contentDescription = "Restart Timer",
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(18.dp)
                 )
                 Spacer(Modifier.width(4.dp))
                 Text("Restart", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
@@ -399,13 +399,13 @@ private fun RestTimerActiveView(
                 onClick = onSkip,
                 modifier = Modifier
                     .weight(1f)
-                    .height(44.dp),
+                    .height(48.dp),
                 contentPadding = PaddingValues(horizontal = 8.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.Check,
                     contentDescription = "Skip Rest",
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(18.dp)
                 )
                 Spacer(Modifier.width(4.dp))
                 Text("Done", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
@@ -479,13 +479,13 @@ private fun RestTimerFinishedBanner(
                 IconButton(
                     onClick = onDismiss,
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(48.dp)
                         .testTag("dismiss_timer_button")
                 ) {
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Dismiss Banner",
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
@@ -496,7 +496,9 @@ private fun RestTimerFinishedBanner(
             ) {
                 Button(
                     onClick = onDismiss,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary,
                         contentColor = MaterialTheme.colorScheme.onPrimary
@@ -507,9 +509,11 @@ private fun RestTimerFinishedBanner(
 
                 OutlinedButton(
                     onClick = onRestart,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
                 ) {
-                    Icon(Icons.Default.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.RestartAlt, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("Rest More", fontWeight = FontWeight.SemiBold)
                 }
@@ -580,6 +584,7 @@ private fun RestTimerIdleView(
                     },
                     modifier = Modifier
                         .weight(1f)
+                        .height(48.dp)
                         .testTag("rest_timer_preset_$seconds"),
                     colors = FilterChipDefaults.filterChipColors(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
@@ -592,13 +597,13 @@ private fun RestTimerIdleView(
             FilledTonalIconButton(
                 onClick = { onStartPreset(60) },
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(48.dp)
                     .testTag("rest_timer_play_default")
             ) {
                 Icon(
                     imageVector = Icons.Default.PlayArrow,
                     contentDescription = "Start 60s Rest",
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(20.dp)
                 )
             }
         }
