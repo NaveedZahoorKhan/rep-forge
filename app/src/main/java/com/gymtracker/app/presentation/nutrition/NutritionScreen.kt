@@ -1,9 +1,11 @@
 package com.gymtracker.app.presentation.nutrition
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -180,9 +182,33 @@ class NutritionViewModel @Inject constructor(
 }
 
 @Composable
-fun NutritionScreen(viewModel: NutritionViewModel = hiltViewModel()) {
+fun NutritionScreen(
+    onNavigateBack: (() -> Unit)? = null,
+    viewModel: NutritionViewModel = hiltViewModel(),
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    NutritionContent(state = state, viewModel = viewModel)
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (onNavigateBack != null) {
+            Row(
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                IconButton(onClick = onNavigateBack) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                    )
+                }
+                Text("Nutrition & Hydration", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            }
+        }
+        Box(modifier = Modifier.weight(1f)) {
+            NutritionContent(state = state, viewModel = viewModel)
+        }
+    }
 }
 
 @Composable

@@ -33,6 +33,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -109,6 +110,7 @@ import kotlinx.serialization.json.Json
 fun GeminiCoachScreen(
     onNavigateToActiveWorkout: (sessionId: String) -> Unit,
     onNavigateToWorkoutsList: () -> Unit,
+    onNavigateBack: (() -> Unit)? = null,
     viewModel: GeminiCoachViewModel = hiltViewModel(),
     modifier: Modifier = Modifier,
 ) {
@@ -138,6 +140,14 @@ fun GeminiCoachScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
+                        if (onNavigateBack != null) {
+                            IconButton(onClick = onNavigateBack) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = "Back",
+                                )
+                            }
+                        }
                         Icon(
                             imageVector = Icons.Default.AutoAwesome,
                             contentDescription = null,

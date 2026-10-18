@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -537,11 +538,10 @@ class ProfileViewModel @Inject constructor(
 
 @Composable
 fun ProfileScreen(
+    onOpenNutrition: (() -> Unit)? = null,
     viewModel: ProfileViewModel = hiltViewModel(),
-    nutritionViewModel: NutritionViewModel = hiltViewModel(),
 ) {
     val baseState by viewModel.state.collectAsStateWithLifecycle()
-    val nutritionState by nutritionViewModel.state.collectAsStateWithLifecycle()
     val profile = baseState.profile ?: UserProfileEntity()
     var tab by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
@@ -560,18 +560,17 @@ fun ProfileScreen(
     }
 
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Profile & Settings", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text("You", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         TabRow(selectedTabIndex = tab) {
-            listOf("Settings", "Equipments", "Nutrition", "Data").forEachIndexed { index, title ->
+            listOf("Settings", "Equipments", "Data").forEachIndexed { index, title ->
                 Tab(selected = tab == index, onClick = { tab = index }, text = { Text(title) })
             }
         }
         Box(Modifier.weight(1f)) {
             when (tab) {
-                0 -> SettingsPanel(profile, baseState.reminders, viewModel)
+                0 -> SettingsPanel(profile, baseState.reminders, viewModel, onOpenNutrition)
                 1 -> EquipmentsPanel(baseState.equipments, viewModel)
-                2 -> NutritionContent(nutritionState, nutritionViewModel)
-                3 -> DataPanel(
+                2 -> DataPanel(
                     viewModel = viewModel,
                     profile = profile,
                     onSignIn = { signInLauncher.launch(viewModel.googleSignInIntent()) },
@@ -582,7 +581,6 @@ fun ProfileScreen(
             }
         }
     }
-
 }
 
 // -------------------------------------------------------------
@@ -999,7 +997,12 @@ private fun EquipmentsPanel(
 // -------------------------------------------------------------
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SettingsPanel(profile: UserProfileEntity, reminders: List<ReminderEntity>, viewModel: ProfileViewModel) {
+private fun SettingsPanel(
+    profile: UserProfileEntity,
+    reminders: List<ReminderEntity>,
+    viewModel: ProfileViewModel,
+    onOpenNutrition: (() -> Unit)? = null,
+) {
     var name by remember(profile.displayName) { mutableStateOf(profile.displayName) }
     var gender by remember(profile.gender) { mutableStateOf(profile.gender) }
     var goal by remember(profile.primaryGoal) { mutableStateOf(profile.primaryGoal) }
@@ -1052,6 +1055,47 @@ private fun SettingsPanel(profile: UserProfileEntity, reminders: List<ReminderEn
     }
 
     LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (onOpenNutrition != null) {
+            item {
+                Card(
+                    onClick = onOpenNutrition,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.WaterDrop, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+                            }
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text("Nutrition & Hydration Tracker", fontWeight = FontWeight.Bold)
+                            Text(
+                                "Track meals, calories, macros, BMR/TDEE, and daily water intake",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Button(
+                            onClick = onOpenNutrition,
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                        ) {
+                            Text("Open", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
