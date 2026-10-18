@@ -515,6 +515,24 @@ class ProfileViewModel @Inject constructor(
         }
     }
 
+    fun updateHealthPreferences(
+        syncWorkouts: Boolean,
+        syncWeights: Boolean,
+        syncHydration: Boolean,
+        syncSteps: Boolean,
+    ) {
+        viewModelScope.launch {
+            repository.updateHealthSyncPreferences(
+                linked = true,
+                syncWorkouts = syncWorkouts,
+                syncWeights = syncWeights,
+                syncHydration = syncHydration,
+                syncSteps = syncSteps,
+            )
+            transient = transient.copy(status = "Health sync preferences updated")
+        }
+    }
+
     fun openHealthConnectSettings(ctx: Context) {
         runCatching {
             val intent = healthSyncService.getHealthConnectSettingsIntent()
@@ -1937,6 +1955,23 @@ private fun DataPanel(
                             healthLinked = profile.healthConnectLinked,
                             onSignOut = onSignOut
                         )
+
+                        Text("Health Stream Preferences", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            ToggleRow("Sync Workouts & Volume", profile.healthSyncWorkouts) {
+                                viewModel.updateHealthPreferences(it, profile.healthSyncWeights, profile.healthSyncHydration, profile.healthSyncSteps)
+                            }
+                            ToggleRow("Sync Body Weight Logs", profile.healthSyncWeights) {
+                                viewModel.updateHealthPreferences(profile.healthSyncWorkouts, it, profile.healthSyncHydration, profile.healthSyncSteps)
+                            }
+                            ToggleRow("Sync Daily Hydration", profile.healthSyncHydration) {
+                                viewModel.updateHealthPreferences(profile.healthSyncWorkouts, profile.healthSyncWeights, it, profile.healthSyncSteps)
+                            }
+                            ToggleRow("Sync Daily Steps & Active Energy", profile.healthSyncSteps) {
+                                viewModel.updateHealthPreferences(profile.healthSyncWorkouts, profile.healthSyncWeights, profile.healthSyncHydration, it)
+                            }
+                        }
 
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                             Button(onClick = onSyncHealth, modifier = Modifier.weight(1f)) {

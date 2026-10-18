@@ -168,7 +168,9 @@ class NutritionTest {
         override suspend fun cancelSession(sessionId: String) {}
         override suspend fun progressForExercise(exerciseId: String) = emptyList<com.gymtracker.app.domain.model.ExerciseProgressPoint>()
         override suspend fun addMeasurement(measurement: com.gymtracker.app.data.local.entity.BodyMeasurementEntity) {}
+        override suspend fun deleteMeasurement(id: String) {}
         override suspend fun addProgressPhoto(photo: com.gymtracker.app.data.local.entity.ProgressPhotoEntity) {}
+        override suspend fun deleteProgressPhoto(id: String) {}
         override suspend fun upsertNutrition(log: NutritionLogEntity) {}
         override suspend fun upsertWater(water: WaterLogEntity) {}
         override suspend fun addWeightLog(weight: WeightLogEntity) {}

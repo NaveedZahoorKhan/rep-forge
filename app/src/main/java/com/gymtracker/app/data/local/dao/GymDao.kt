@@ -307,6 +307,12 @@ interface GymDao {
     @Query("DELETE FROM weight_logs WHERE id = :id")
     suspend fun deleteWeightLog(id: String)
 
+    @Query("DELETE FROM body_measurements WHERE id = :id")
+    suspend fun deleteMeasurement(id: String)
+
+    @Query("DELETE FROM progress_photos WHERE id = :id")
+    suspend fun deleteProgressPhoto(id: String)
+
     @Query("DELETE FROM weight_logs")
     suspend fun clearWeightLogs()
 

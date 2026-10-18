@@ -650,8 +650,16 @@ class GymRepositoryImpl @Inject constructor(
         dao.upsertMeasurement(measurement)
     }
 
+    override suspend fun deleteMeasurement(id: String) {
+        dao.deleteMeasurement(id)
+    }
+
     override suspend fun addProgressPhoto(photo: ProgressPhotoEntity) {
         dao.upsertPhoto(photo)
+    }
+
+    override suspend fun deleteProgressPhoto(id: String) {
+        dao.deleteProgressPhoto(id)
     }
 
     override suspend fun upsertNutrition(log: NutritionLogEntity) {
