@@ -234,6 +234,54 @@ class ActiveWorkoutTimerTest {
     }
 
     @Test
+    fun `completeAllRemaining completes all incomplete sets in session`() = runTest(testDispatcher) {
+        val completedSetIds = mutableListOf<String>()
+        val dummyRepo = Proxy.newProxyInstance(
+            GymRepository::class.java.classLoader,
+            arrayOf(GymRepository::class.java)
+        ) { _, method, args ->
+            when (method.name) {
+                "observeUserProfile" -> flowOf(UserProfileEntity(displayName = "Athlete", soundEnabled = false, vibrationEnabled = false))
+                "observeActiveSession" -> flowOf(null)
+                "observeSessionSets" -> flowOf(emptyList<PerformedSetEntity>())
+                "completeSet" -> {
+                    val setId = args[0] as String
+                    completedSetIds.add(setId)
+                    PerformedSetEntity(id = setId, sessionId = "s1", workoutExerciseId = "we1", exerciseId = "ex1", exerciseName = "Squat", setNumber = 1, completed = true)
+                }
+                else -> null
+            }
+        } as GymRepository
+
+        val helperInstance = object : NotificationHelper {
+            override fun ensureChannels() {}
+            override fun showRestComplete(exerciseName: String, sound: Boolean, vibration: Boolean) {}
+            override fun showWorkoutReminder(title: String, body: String) {}
+        }
+
+        val soundPlayerInstance = object : com.gymtracker.app.notification.WorkoutSoundPlayer {
+            override fun playRestCompleteSound() {}
+            override fun vibrateRestComplete() {}
+        }
+
+        val vm = ActiveWorkoutViewModel(dummyRepo, helperInstance, soundPlayerInstance)
+
+        val setsList = listOf(
+            PerformedSetEntity(id = "s1", sessionId = "sess1", workoutExerciseId = "we1", exerciseId = "ex1", exerciseName = "Squat", setNumber = 1, reps = 10, weight = 100.0, completed = true),
+            PerformedSetEntity(id = "s2", sessionId = "sess1", workoutExerciseId = "we1", exerciseId = "ex1", exerciseName = "Squat", setNumber = 2, reps = 10, weight = 100.0, completed = false),
+            PerformedSetEntity(id = "s3", sessionId = "sess1", workoutExerciseId = "we1", exerciseId = "ex1", exerciseName = "Squat", setNumber = 3, reps = 10, weight = 100.0, completed = false)
+        )
+
+        vm.completeAllRemaining(setsList)
+        runCurrent()
+
+        assertEquals(2, completedSetIds.size)
+        assertTrue(completedSetIds.contains("s2"))
+        assertTrue(completedSetIds.contains("s3"))
+        assertFalse(completedSetIds.contains("s1"))
+    }
+
+    @Test
     fun `correcting completed set updates without restarting rest timer`() = runTest(testDispatcher) {
         val completedSetReturn = PerformedSetEntity(
             id = "set1",

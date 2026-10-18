@@ -191,6 +191,7 @@ private class FakeGymDao : GymDao {
     override suspend fun upsertMeasurement(item: BodyMeasurementEntity) {}
     override suspend fun upsertPhotos(items: List<ProgressPhotoEntity>) {}
     override suspend fun upsertPhoto(item: ProgressPhotoEntity) {}
+    override suspend fun deleteProgressPhoto(id: String) {}
     override suspend fun upsertNutritionLogs(items: List<NutritionLogEntity>) {}
     override suspend fun upsertNutritionLog(item: NutritionLogEntity) {}
     override suspend fun upsertMeals(items: List<MealEntity>) {}
@@ -201,6 +202,8 @@ private class FakeGymDao : GymDao {
     override suspend fun upsertWeightLog(item: WeightLogEntity) {}
     override suspend fun upsertSchedules(items: List<WeeklyScheduleEntity>) {}
     override suspend fun upsertSchedule(item: WeeklyScheduleEntity) {}
+    override suspend fun deleteSchedule(id: String) {}
+    override suspend fun deleteScheduleForDay(weekDay: com.gymtracker.app.data.local.entity.WeekDay) {}
     override suspend fun upsertReminders(items: List<ReminderEntity>) {}
     override suspend fun upsertReminder(item: ReminderEntity) {}
     override fun observeGymEquipments(): Flow<List<GymEquipmentEntity>> = MutableStateFlow(emptyList())

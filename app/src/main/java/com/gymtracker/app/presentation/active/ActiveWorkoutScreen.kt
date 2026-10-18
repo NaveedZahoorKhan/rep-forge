@@ -4,6 +4,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +25,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.Check
@@ -71,6 +73,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -448,10 +456,12 @@ fun ActiveWorkoutRouteScreen(
     var formula by remember { mutableStateOf(OneRepMaxFormula.EPLEY) }
     var showCalculators by remember { mutableStateOf(false) }
 
-    // Dialog state for clean, safe Cancel, Finish, and Bulk Completion actions
+    // State for Finish Review Summary Modal and confirmation dialogs
+    var showFinishReviewSummaryModal by remember { mutableStateOf(false) }
     var showCancelConfirmDialog by remember { mutableStateOf(false) }
     var showFinishConfirmDialog by remember { mutableStateOf(false) }
     var showCompleteAllConfirmDialog by remember { mutableStateOf(false) }
+    var isSubmittingFinish by remember { mutableStateOf(false) }
 
     val volume = sets.filter { it.completed }.sumOf { it.weight * it.reps }
     val latestSet = sets.lastOrNull { it.completed }
@@ -498,17 +508,8 @@ fun ActiveWorkoutRouteScreen(
                         )
                     }
                     Button(
-                        enabled = isSessionValid,
-                        onClick = {
-                            if (remainingCount > 0) {
-                                showFinishConfirmDialog = true
-                            } else {
-                                coroutineScope.launch {
-                                    snackbarHostState.showSnackbar("Workout completed successfully!")
-                                }
-                                viewModel.finish(onDone)
-                            }
-                        },
+                        enabled = isSessionValid && !isSubmittingFinish,
+                        onClick = { showFinishReviewSummaryModal = true },
                         shape = RoundedCornerShape(8.dp),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
@@ -681,24 +682,32 @@ fun ActiveWorkoutRouteScreen(
                 }
             }
 
-            // Sets List
+            // Grouped Exercise Sets List
+            val groupedSets = remember(sets) {
+                sets.groupBy { set -> set.exerciseId.ifBlank { set.exerciseName } }
+            }
+
             LazyColumn(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                items(sets, key = { it.id }) { set ->
-                    SwipeSetRow(
-                        set = set,
-                        onComplete = { reps, weight ->
-                            val isUpdate = set.completed
-                            viewModel.complete(set, reps, weight)
-                            coroutineScope.launch {
-                                val msg = if (isUpdate) "Updated ${set.exerciseName} set ${set.setNumber}" else "Logged ${set.exerciseName} set ${set.setNumber}"
-                                snackbarHostState.showSnackbar(msg)
-                            }
-                        },
-                        onLongPress = { editingSet = set },
-                    )
+                groupedSets.forEach { (exerciseKey, exerciseSets) ->
+                    val exerciseName = exerciseSets.firstOrNull()?.exerciseName ?: "Exercise"
+                    item(key = "header_$exerciseKey") {
+                        ExerciseHeaderCard(
+                            exerciseName = exerciseName,
+                            exerciseSets = exerciseSets,
+                            onCompleteSet = { set, reps, weight ->
+                                val isUpdate = set.completed
+                                viewModel.complete(set, reps, weight)
+                                coroutineScope.launch {
+                                    val msg = if (isUpdate) "Updated $exerciseName set ${set.setNumber}" else "Logged $exerciseName set ${set.setNumber}"
+                                    snackbarHostState.showSnackbar(msg)
+                                }
+                            },
+                            onLongPressSet = { set -> editingSet = set }
+                        )
+                    }
                 }
 
                 // Dedicated bottom Finish & Discard Actions Card
@@ -731,17 +740,8 @@ fun ActiveWorkoutRouteScreen(
                             }
 
                             Button(
-                                enabled = isSessionValid,
-                                onClick = {
-                                    if (remainingCount > 0) {
-                                        showFinishConfirmDialog = true
-                                    } else {
-                                        coroutineScope.launch {
-                                            snackbarHostState.showSnackbar("Workout completed successfully!")
-                                        }
-                                        viewModel.finish(onDone)
-                                    }
-                                },
+                                enabled = isSessionValid && !isSubmittingFinish,
+                                onClick = { showFinishReviewSummaryModal = true },
                                 modifier = Modifier.fillMaxWidth().height(48.dp),
                                 shape = RoundedCornerShape(10.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
@@ -843,28 +843,143 @@ fun ActiveWorkoutRouteScreen(
         )
     }
 
-    // Confirmation dialog when finishing with uncompleted sets
-    if (showFinishConfirmDialog) {
+    // Finish Review Summary Modal before committing workout
+    if (showFinishReviewSummaryModal) {
+        val startedAt = activeSession?.startedAt ?: System.currentTimeMillis()
+        val durationMillis = System.currentTimeMillis() - startedAt
+        val durationMinutes = (durationMillis / 1000 / 60).coerceAtLeast(1)
+
+        val groupedSetsForSummary = sets.groupBy { it.exerciseId.ifBlank { it.exerciseName } }
+
         AlertDialog(
-            onDismissRequest = { showFinishConfirmDialog = false },
-            title = { Text("Finish Workout?") },
-            text = { Text("You still have $remainingCount uncompleted set(s). Do you want to finish and save your progress now?") },
+            onDismissRequest = { showFinishReviewSummaryModal = false },
+            title = {
+                Column {
+                    Text(
+                        text = "Finish Workout Review",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = activeSession?.workoutName ?: "Workout Session",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    // Summary metrics banner
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceAround
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("DURATION", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            Text("${durationMinutes}m", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("VOLUME", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            Text("${volume.toInt()}kg", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("SETS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            Text("$completedCount/${sets.size}", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                        }
+                    }
+
+                    // Incomplete work warning banner if applicable
+                    if (remainingCount > 0) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+                                Text(
+                                    text = "$remainingCount set(s) incomplete across exercises.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+
+                    // Exercise Breakdown List
+                    Text(
+                        text = "Exercise Breakdown",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        groupedSetsForSummary.forEach { (_, exSets) ->
+                            val exName = exSets.firstOrNull()?.exerciseName ?: "Exercise"
+                            val exCompleted = exSets.count { it.completed }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = exName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    text = "$exCompleted/${exSets.size} sets",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (exCompleted == exSets.size) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                }
+            },
             confirmButton = {
                 Button(
+                    enabled = !isSubmittingFinish,
                     onClick = {
-                        showFinishConfirmDialog = false
-                        coroutineScope.launch {
-                            snackbarHostState.showSnackbar("Workout completed successfully!")
+                        if (!isSubmittingFinish) {
+                            isSubmittingFinish = true
+                            showFinishReviewSummaryModal = false
+                            coroutineScope.launch {
+                                snackbarHostState.showSnackbar("Workout completed successfully!")
+                            }
+                            viewModel.finish(onDone)
                         }
-                        viewModel.finish(onDone)
                     },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                 ) {
-                    Text("Finish & Save")
+                    if (isSubmittingFinish) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary)
+                    } else {
+                        Text("Save & Finish", fontWeight = FontWeight.Bold)
+                    }
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showFinishConfirmDialog = false }) {
-                    Text("Back to Workout")
+                TextButton(
+                    enabled = !isSubmittingFinish,
+                    onClick = { showFinishReviewSummaryModal = false }
+                ) {
+                    Text("Return to Workout")
                 }
             }
         )
@@ -877,23 +992,128 @@ fun ActiveWorkoutRouteScreen(
             onDismiss = { showWarmUpModal = false },
             onStartWorkout = { showWarmUpModal = false },
             targetWorkoutId = activeSession?.workoutId.orEmpty(),
+            isFromActiveWorkout = true,
         )
     }
 }
 
 /**
- * Simple, streamlined set logging row.
- * Displays Weight (kg) and Reps with quick stepper chips.
- * Uses FlowRow for quick adjust controls for large text and narrow screen responsiveness.
+ * Card grouping sets by Exercise with clear header columns:
+ * SET | PREVIOUS | WEIGHT (kg) | REPS | DONE
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
-private fun SwipeSetRow(
+private fun ExerciseHeaderCard(
+    exerciseName: String,
+    exerciseSets: List<PerformedSetEntity>,
+    onCompleteSet: (set: PerformedSetEntity, reps: Int, weight: Double) -> Unit,
+    onLongPressSet: (set: PerformedSetEntity) -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Exercise Title
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = exerciseName,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "${exerciseSets.count { it.completed }}/${exerciseSets.size} done",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // Column Header Row: SET | PREVIOUS | WEIGHT | REPS | DONE
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        shape = RoundedCornerShape(6.dp)
+                    )
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "SET",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.width(36.dp)
+                )
+                Text(
+                    text = "PREVIOUS",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1.1f)
+                )
+                Text(
+                    text = "KG",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "REPS",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "DONE",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.width(48.dp),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+            }
+
+            // Sets List
+            exerciseSets.forEach { set ->
+                SetRowItem(
+                    set = set,
+                    onComplete = { reps, weight -> onCompleteSet(set, reps, weight) },
+                    onLongPress = { onLongPressSet(set) }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Individual set row with clear columns, numeric keyboards,Next focus, unit badges,
+ * secondary historical performance, and 48dp done target.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SetRowItem(
     set: PerformedSetEntity,
     onComplete: (reps: Int, weight: Double) -> Unit,
     onLongPress: () -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
+    val focusManager = LocalFocusManager.current
+
     var reps by remember(set.id, set.reps) { mutableStateOf(set.reps.toString()) }
     var weight by remember(set.id, set.weight) { mutableStateOf(set.weight.toString()) }
 
@@ -902,145 +1122,174 @@ private fun SwipeSetRow(
     val isRepsValid = repsParsed != null && repsParsed >= 0
     val isWeightValid = weightParsed != null && weightParsed >= 0.0
 
-    val dismissState = rememberSwipeToDismissBoxState(
-        confirmValueChange = {
-            if (it != SwipeToDismissBoxValue.Settled && !set.completed) {
-                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                val finalReps = repsParsed?.coerceAtLeast(0) ?: set.reps.coerceAtLeast(0)
-                val finalWeight = weightParsed?.coerceAtLeast(0.0) ?: set.weight.coerceAtLeast(0.0)
-                onComplete(finalReps, finalWeight)
-            }
-            false
-        }
-    )
+    // Visual distinction: active set vs completed set
+    val rowBackground = if (set.completed) {
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
 
-    SwipeToDismissBox(
-        state = dismissState,
-        backgroundContent = {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.primaryContainer)
-                    .padding(16.dp),
-                contentAlignment = Alignment.CenterEnd,
-            ) { Text("Complete ✓", color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold) }
-        },
+    val rowBorderColor = if (set.completed) {
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+    } else {
+        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+    }
+
+    // Historical / Previous performance string (secondary)
+    val previousText = if (set.weight > 0 || set.reps > 0) {
+        "${set.weight.toInt()}kg × ${set.reps}"
+    } else {
+        "—"
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(rowBackground)
+            .border(1.dp, rowBorderColor, RoundedCornerShape(8.dp))
+            .combinedClickable(onClick = {}, onLongClick = onLongPress)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        val color by animateColorAsState(
-            targetValue = if (set.completed) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surface,
-            label = "setColor",
-        )
-        Card(
-            modifier = Modifier.combinedClickable(onClick = {}, onLongClick = onLongPress),
-            colors = CardDefaults.cardColors(containerColor = color),
-            border = BorderStroke(
-                width = if (set.completed) 1.5.dp else 1.dp,
-                color = if (set.completed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
-            ),
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Header: Exercise Name, Set #, PR badge
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("${set.exerciseName} • Set ${set.setNumber}", fontWeight = FontWeight.Bold)
-                        if (set.notes.isNotBlank()) {
-                            Text(set.notes, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                    if (set.isPr) {
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.2f),
-                        ) {
-                            Text("🏆 PR", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp), fontSize = 11.sp)
-                        }
-                    }
-                }
+            // SET # Badge
+            Box(
+                modifier = Modifier
+                    .width(36.dp)
+                    .height(36.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(
+                        if (set.completed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "${set.setNumber}",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    color = if (set.completed) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                )
+            }
 
-                // Quick Adjust Steppers for Weight & Reps - FlowRow prevents crowding on narrow screens or large font scale
-                if (!set.completed) {
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text("Quick adjust:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        FilterChip(
-                            selected = false,
-                            onClick = {
-                                val currentW = weight.toDoubleOrNull() ?: set.weight
-                                weight = (currentW - 2.5).coerceAtLeast(0.0).toString()
-                            },
-                            label = { Text("-2.5kg", fontSize = 11.sp) }
-                        )
-                        FilterChip(
-                            selected = false,
-                            onClick = {
-                                val currentW = weight.toDoubleOrNull() ?: set.weight
-                                weight = (currentW + 2.5).coerceAtLeast(0.0).toString()
-                            },
-                            label = { Text("+2.5kg", fontSize = 11.sp) }
-                        )
-                        FilterChip(
-                            selected = false,
-                            onClick = {
-                                val currentR = reps.toIntOrNull() ?: set.reps
-                                reps = (currentR - 1).coerceAtLeast(0).toString()
-                            },
-                            label = { Text("-1 rep", fontSize = 11.sp) }
-                        )
-                        FilterChip(
-                            selected = false,
-                            onClick = {
-                                val currentR = reps.toIntOrNull() ?: set.reps
-                                reps = (currentR + 1).coerceAtLeast(0).toString()
-                            },
-                            label = { Text("+1 rep", fontSize = 11.sp) }
-                        )
-                    }
-                }
-
-                // Inputs: Weight (kg) and Reps with error state validation
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                    SmallField("Weight (kg)", weight, { weight = it }, isError = !isWeightValid, modifier = Modifier.weight(1f))
-                    SmallField("Reps", reps, { reps = it }, isError = !isRepsValid, modifier = Modifier.weight(1f))
-                }
-                if (!isRepsValid || !isWeightValid) {
+            // PREVIOUS Historical Performance
+            Column(
+                modifier = Modifier
+                    .weight(1.1f)
+                    .padding(horizontal = 4.dp),
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = previousText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Normal
+                )
+                if (set.isPr) {
                     Text(
-                        text = "Please enter valid non-negative numbers for weight and reps.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        fontSize = 11.sp
+                        text = "🏆 PR",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp
                     )
                 }
+            }
 
-                // Log / Completed Button
-                Button(
-                    onClick = {
+            // WEIGHT input field with Next focus
+            OutlinedTextField(
+                value = weight,
+                onValueChange = { weight = it },
+                isError = !isWeightValid,
+                singleLine = true,
+                suffix = { Text("kg", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Decimal,
+                    imeAction = ImeAction.Next
+                ),
+                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp
+                ),
+                modifier = Modifier.weight(1f)
+            )
+
+            Spacer(Modifier.width(6.dp))
+
+            // REPS input field with Done focus
+            OutlinedTextField(
+                value = reps,
+                onValueChange = { reps = it },
+                isError = !isRepsValid,
+                singleLine = true,
+                suffix = { Text("reps", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Number,
+                    imeAction = ImeAction.Done
+                ),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                    onDone = {
+                        focusManager.clearFocus()
+                        if (isRepsValid && isWeightValid) {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onComplete(repsParsed ?: set.reps, weightParsed ?: set.weight)
+                        }
+                    }
+                ),
+                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp
+                ),
+                modifier = Modifier.weight(1f)
+            )
+
+            Spacer(Modifier.width(6.dp))
+
+            // DONE Toggle Button (min 48dp touch target)
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (set.completed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
+                    )
+                    .clickable(enabled = isRepsValid && isWeightValid) {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         val finalReps = repsParsed?.coerceAtLeast(0) ?: set.reps.coerceAtLeast(0)
                         val finalWeight = weightParsed?.coerceAtLeast(0.0) ?: set.weight.coerceAtLeast(0.0)
                         onComplete(finalReps, finalWeight)
-                    },
-                    enabled = isRepsValid && isWeightValid,
-                    colors = if (set.completed) {
-                        ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    } else {
-                        ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                    },
-                    modifier = Modifier.fillMaxWidth().height(42.dp),
-                    shape = RoundedCornerShape(8.dp),
-                ) {
-                    if (set.completed) {
-                        Text("Completed ✓ (Tap to update)", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                    } else {
-                        Text("Log Set ${set.setNumber} (${weight}kg × ${reps} reps)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
-                }
+                    .semantics {
+                        role = Role.Button
+                        contentDescription = if (set.completed) {
+                            "Completed set ${set.setNumber} for ${set.exerciseName}. Tap to update."
+                        } else {
+                            "Mark set ${set.setNumber} completed for ${set.exerciseName}"
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = null,
+                    tint = if (set.completed) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.size(22.dp)
+                )
             }
+        }
+
+        if (!isRepsValid || !isWeightValid) {
+            Text(
+                text = "Enter valid non-negative weight & reps.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                fontSize = 10.sp,
+                modifier = Modifier.padding(start = 4.dp)
+            )
         }
     }
 }

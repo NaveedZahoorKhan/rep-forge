@@ -169,11 +169,14 @@ class NutritionTest {
         override suspend fun progressForExercise(exerciseId: String) = emptyList<com.gymtracker.app.domain.model.ExerciseProgressPoint>()
         override suspend fun addMeasurement(measurement: com.gymtracker.app.data.local.entity.BodyMeasurementEntity) {}
         override suspend fun addProgressPhoto(photo: com.gymtracker.app.data.local.entity.ProgressPhotoEntity) {}
+        override suspend fun deleteProgressPhoto(id: String) {}
         override suspend fun upsertNutrition(log: NutritionLogEntity) {}
         override suspend fun upsertWater(water: WaterLogEntity) {}
         override suspend fun addWeightLog(weight: WeightLogEntity) {}
         override suspend fun deleteWeightLog(id: String) {}
         override suspend fun upsertSchedule(schedule: com.gymtracker.app.data.local.entity.WeeklyScheduleEntity) {}
+        override suspend fun deleteSchedule(id: String) {}
+        override suspend fun deleteScheduleForDay(weekDay: com.gymtracker.app.data.local.entity.WeekDay) {}
         override suspend fun upsertReminder(reminder: com.gymtracker.app.data.local.entity.ReminderEntity) {}
         override suspend fun deleteReminder(id: String) {}
         override suspend fun exportJson() = ""

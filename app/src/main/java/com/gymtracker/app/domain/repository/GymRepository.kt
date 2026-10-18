@@ -82,6 +82,7 @@ interface GymRepository {
     suspend fun progressForExercise(exerciseId: String): List<ExerciseProgressPoint>
     suspend fun addMeasurement(measurement: BodyMeasurementEntity)
     suspend fun addProgressPhoto(photo: ProgressPhotoEntity)
+    suspend fun deleteProgressPhoto(id: String)
     suspend fun upsertNutrition(log: NutritionLogEntity)
     suspend fun addMeal(meal: MealEntity)
     suspend fun updateMeal(meal: MealEntity)
@@ -91,6 +92,8 @@ interface GymRepository {
     suspend fun addWeightLog(weight: WeightLogEntity)
     suspend fun deleteWeightLog(id: String)
     suspend fun upsertSchedule(schedule: WeeklyScheduleEntity)
+    suspend fun deleteSchedule(id: String)
+    suspend fun deleteScheduleForDay(weekDay: com.gymtracker.app.data.local.entity.WeekDay)
     suspend fun upsertReminder(reminder: ReminderEntity)
     suspend fun deleteReminder(id: String)
     suspend fun exportJson(): String

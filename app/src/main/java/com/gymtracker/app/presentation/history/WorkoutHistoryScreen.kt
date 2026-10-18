@@ -32,9 +32,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Adjust
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FitnessCenter
@@ -184,10 +187,13 @@ fun WorkoutHistoryScreen(
         WorkoutHistoryContent(
             state = state,
             onSetTimeFilter = viewModel::setTimeFilter,
+            onSetTodayShortcut = viewModel::setTodayShortcut,
+            onClearFilters = viewModel::clearFilters,
             onSetViewMode = viewModel::setViewMode,
             onSetSearchQuery = viewModel::setSearchQuery,
             onSelectExercise = viewModel::selectExercise,
             onToggleSessionExpanded = viewModel::toggleSessionExpanded,
+            onEditSession = viewModel::openEditSession,
             onDeleteSessionRequest = { sessionToDelete = it },
             onOpenAddDialog = { viewModel.setShowAddDialog(true) },
             modifier = Modifier.padding(padding),
@@ -222,6 +228,7 @@ fun WorkoutHistoryScreen(
     if (state.showAddPastWorkoutDialog) {
         AddPastWorkoutDialog(
             exercises = state.exercises,
+            editingSummary = state.editingSessionSummary,
             onDismiss = { viewModel.setShowAddDialog(false) },
             onConfirm = { draft -> viewModel.logPastWorkout(draft) },
         )
@@ -232,14 +239,21 @@ fun WorkoutHistoryScreen(
 fun WorkoutHistoryContent(
     state: WorkoutHistoryUiState,
     onSetTimeFilter: (TimeRangeFilter) -> Unit,
+    onSetTodayShortcut: () -> Unit,
+    onClearFilters: () -> Unit,
     onSetViewMode: (HistoryViewMode) -> Unit,
     onSetSearchQuery: (String) -> Unit,
     onSelectExercise: (String) -> Unit,
     onToggleSessionExpanded: (String) -> Unit,
+    onEditSession: (WorkoutSessionSummary) -> Unit,
     onDeleteSessionRequest: (WorkoutSessionSummary) -> Unit,
     onOpenAddDialog: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val groupedSessions = remember(state.filteredSummaries) {
+        groupSummariesByDate(state.filteredSummaries)
+    }
+
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -316,7 +330,7 @@ fun WorkoutHistoryContent(
             }
         }
 
-        // Time Range Filter Chips
+        // Time Range Filter Chips & Today Shortcut
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -329,12 +343,18 @@ fun WorkoutHistoryContent(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = FontWeight.Bold,
                 )
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     items(TimeRangeFilter.entries) { filter ->
                         FilterChip(
                             selected = state.timeFilter == filter,
                             onClick = { onSetTimeFilter(filter) },
                             label = { Text(filter.label, fontSize = 12.sp) },
+                            leadingIcon = if (filter == TimeRangeFilter.TODAY) {
+                                { Icon(Icons.Default.CalendarToday, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                            } else null,
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
                                 selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -374,31 +394,111 @@ fun WorkoutHistoryContent(
                 }
             }
 
-            if (state.filteredSummaries.isEmpty()) {
+            if (state.summaries.isEmpty()) {
                 item {
-                    EmptyState(
-                        title = "No workout sessions found",
-                        detail = if (state.searchQuery.isNotBlank()) "No sessions matching '${state.searchQuery}'" else "Complete a workout or tap '+ Log Workout' to save your first session.",
-                    )
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(40.dp))
+                            Text(
+                                "No workout history recorded yet",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center,
+                            )
+                            Text(
+                                "Complete a workout session or tap '+ Log Workout' to record your first workout entry.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                            )
+                            Button(
+                                onClick = onOpenAddDialog,
+                                modifier = Modifier.padding(top = 4.dp),
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Log Past Workout")
+                            }
+                        }
+                    }
+                }
+            } else if (state.filteredSummaries.isEmpty()) {
+                item {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp))
+                            Text(
+                                "No sessions match filter criteria",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center,
+                            )
+                            Text(
+                                if (state.searchQuery.isNotBlank()) "No sessions found matching search '${state.searchQuery}'." else "No sessions logged for the selected time range (${state.timeFilter.label}).",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                            )
+                            OutlinedButton(
+                                onClick = onClearFilters,
+                                modifier = Modifier.padding(top = 4.dp),
+                            ) {
+                                Text("Clear Filters")
+                            }
+                        }
+                    }
                 }
             } else {
                 item {
-                    Text(
-                        "Past Completed Sessions",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "Past Completed Sessions",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            "${state.filteredSummaries.size} sessions",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
 
-                items(state.filteredSummaries, key = { it.session.id }) { summary ->
-                    val isExpanded = state.expandedSessionId == summary.session.id
-                    PastSessionSummaryCard(
-                        summary = summary,
-                        isExpanded = isExpanded,
-                        onToggleExpand = { onToggleSessionExpanded(summary.session.id) },
-                        onDelete = { onDeleteSessionRequest(summary) },
-                    )
+                // Render sessions grouped by date
+                groupedSessions.forEach { (dateGroupHeader, sessionsInGroup) ->
+                    item(key = "header_$dateGroupHeader") {
+                        DateGroupHeader(dateGroupHeader, sessionCount = sessionsInGroup.size)
+                    }
+
+                    items(sessionsInGroup, key = { it.session.id }) { summary ->
+                        val isExpanded = state.expandedSessionId == summary.session.id
+                        PastSessionSummaryCard(
+                            summary = summary,
+                            isExpanded = isExpanded,
+                            onToggleExpand = { onToggleSessionExpanded(summary.session.id) },
+                            onEdit = { onEditSession(summary) },
+                            onDelete = { onDeleteSessionRequest(summary) },
+                        )
+                    }
                 }
             }
         } else {
@@ -558,10 +658,51 @@ private fun HistoryMetricCard(
 }
 
 @Composable
+private fun DateGroupHeader(dateHeader: String, sessionCount: Int) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                Icons.Default.CalendarMonth,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(16.dp)
+            )
+            Text(
+                dateHeader,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+        ) {
+            Text(
+                "$sessionCount ${if (sessionCount == 1) "session" else "sessions"}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+            )
+        }
+    }
+}
+
+@Composable
 fun PastSessionSummaryCard(
     summary: WorkoutSessionSummary,
     isExpanded: Boolean,
     onToggleExpand: () -> Unit,
+    onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
     val completionDateStr = remember(summary.completedAt) { formatCompletionDate(summary.completedAt) }
@@ -574,7 +715,7 @@ fun PastSessionSummaryCard(
         shape = RoundedCornerShape(14.dp),
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            // Header with completion date, day badge, and delete button
+            // Header with completion date, title, and action buttons (Edit + Delete)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -583,6 +724,7 @@ fun PastSessionSummaryCard(
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f),
                 ) {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
@@ -610,16 +752,29 @@ fun PastSessionSummaryCard(
                     }
                 }
 
-                IconButton(
-                    onClick = onDelete,
-                    modifier = Modifier.size(32.dp),
-                ) {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = "Delete Session",
-                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
-                        modifier = Modifier.size(18.dp),
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    IconButton(
+                        onClick = onEdit,
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = "Edit Session",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                    IconButton(
+                        onClick = onDelete,
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = "Delete Session",
+                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
                 }
             }
 
@@ -759,12 +914,39 @@ private fun ExerciseBreakdownRow(summary: ExerciseVolumeSummary) {
                 )
             }
 
+            // Separate Template Targets from Recorded Results
+            if (summary.targetSummary != null) {
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Adjust,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Text(
+                            summary.targetSummary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                    }
+                }
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    "${summary.completedSets} completed sets • Max: ${summary.maxWeightKg.toInt()} kg",
+                    "Recorded Results: ${summary.completedSets} completed sets • Max: ${summary.maxWeightKg.toInt()} kg",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1091,19 +1273,48 @@ private data class PastExerciseDraftUi(
 @Composable
 fun AddPastWorkoutDialog(
     exercises: List<ExerciseEntity>,
+    editingSummary: WorkoutSessionSummary? = null,
     onDismiss: () -> Unit,
     onConfirm: (PastWorkoutLogDraft) -> Unit,
 ) {
-    var workoutName by remember { mutableStateOf("") }
-    var durationMinutesStr by remember { mutableStateOf("") }
-    var rating by remember { mutableStateOf<Int?>(null) }
-    var notes by remember { mutableStateOf("") }
+    var workoutName by remember(editingSummary) {
+        mutableStateOf(editingSummary?.session?.workoutName ?: "")
+    }
+    var durationMinutesStr by remember(editingSummary) {
+        val durationMins = editingSummary?.session?.durationSeconds?.let { it / 60 } ?: 30L
+        mutableStateOf(if (durationMins > 0) durationMins.toString() else "30")
+    }
+    var rating by remember(editingSummary) {
+        mutableStateOf(editingSummary?.session?.rating)
+    }
+    var notes by remember(editingSummary) {
+        mutableStateOf(editingSummary?.session?.notes ?: "")
+    }
 
     val today = remember { LocalDate.now() }
-    var selectedDate by remember { mutableStateOf(today) }
+    var selectedDate by remember(editingSummary) {
+        val initialDate = editingSummary?.let {
+            Instant.ofEpochMilli(it.completedAt).atZone(ZoneId.systemDefault()).toLocalDate()
+        } ?: today
+        mutableStateOf(initialDate)
+    }
     var showDatePickerDialog by remember { mutableStateOf(false) }
 
-    val selectedExercises = remember { mutableStateListOf<PastExerciseDraftUi>() }
+    val selectedExercises = remember(editingSummary) {
+        val initialList = editingSummary?.exerciseSummaries?.map { exSummary ->
+            PastExerciseDraftUi(
+                exerciseId = exSummary.exerciseId,
+                exerciseName = exSummary.exerciseName,
+                sets = exSummary.setsDetail.map { s ->
+                    PastSetDraftUi(
+                        weightStr = if (s.weightKg % 1.0 == 0.0) s.weightKg.toInt().toString() else s.weightKg.toString(),
+                        repsStr = s.reps.toString(),
+                    )
+                }
+            )
+        }.orEmpty()
+        mutableStateListOf<PastExerciseDraftUi>().apply { addAll(initialList) }
+    }
     var exerciseDropdownExpanded by remember { mutableStateOf(false) }
 
     // Validation
@@ -1162,8 +1373,15 @@ fun AddPastWorkoutDialog(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Text("Log Past Workout", fontWeight = FontWeight.Bold)
+                Icon(
+                    if (editingSummary != null) Icons.Default.Edit else Icons.Default.History,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    if (editingSummary != null) "Edit Workout Session" else "Log Past Workout",
+                    fontWeight = FontWeight.Bold
+                )
             }
         },
         text = {
@@ -1447,6 +1665,7 @@ fun AddPastWorkoutDialog(
                             )
                         }
                         val draft = PastWorkoutLogDraft(
+                            id = editingSummary?.session?.id,
                             workoutName = workoutName.trim().ifBlank { "Workout Session" },
                             dateEpochMilli = targetTime,
                             durationMinutes = durationMinutes,
@@ -1459,13 +1678,30 @@ fun AddPastWorkoutDialog(
                 },
                 modifier = Modifier.testTag("dialog_confirm_log_workout"),
             ) {
-                Text("Save Workout")
+                Text(if (editingSummary != null) "Save Changes" else "Save Workout")
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
         },
     )
+}
+
+private fun groupSummariesByDate(summaries: List<WorkoutSessionSummary>): List<Pair<String, List<WorkoutSessionSummary>>> {
+    val zone = ZoneId.systemDefault()
+    val today = LocalDate.now(zone)
+    val formatter = DateTimeFormatter.ofPattern("EEEE, MMM d, yyyy", Locale.getDefault())
+
+    return summaries
+        .groupBy { summary ->
+            val localDate = Instant.ofEpochMilli(summary.completedAt).atZone(zone).toLocalDate()
+            when {
+                localDate.isEqual(today) -> "Today"
+                localDate.isEqual(today.minusDays(1)) -> "Yesterday"
+                else -> localDate.format(formatter)
+            }
+        }
+        .toList()
 }
 
 // Helpers for formatted dates

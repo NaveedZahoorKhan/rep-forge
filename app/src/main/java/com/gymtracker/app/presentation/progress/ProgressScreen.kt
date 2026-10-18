@@ -1,5 +1,6 @@
 package com.gymtracker.app.presentation.progress
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -32,6 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.MonitorWeight
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -39,6 +41,7 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.Opacity
@@ -111,7 +114,10 @@ import com.gymtracker.app.presentation.components.EmptyState
 import com.gymtracker.app.presentation.components.LineChartCard
 import com.gymtracker.app.presentation.components.MultiLineChartCard
 import com.gymtracker.app.presentation.components.StreakHeatmap
+import com.gymtracker.app.presentation.history.WorkoutHistoryScreen
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.LocalDate
@@ -148,6 +154,8 @@ data class ProgressUiState(
     val isSyncingHealth: Boolean = false,
     val syncStepMessage: String? = null,
     val syncProgress: Float = 0f,
+    val syncIsError: Boolean = false,
+    val isHealthConnectAvailable: Boolean = false,
 )
 
 @HiltViewModel
@@ -155,10 +163,22 @@ class ProgressViewModel @Inject constructor(
     private val repository: GymRepository,
     private val googleAuthService: com.gymtracker.app.data.auth.GoogleAuthService,
     private val healthSyncService: com.gymtracker.app.data.health.HealthSyncService,
+    @ApplicationContext private val context: Context,
 ) : ViewModel() {
     private val _isSyncingHealth = MutableStateFlow(false)
     private val _syncStepMessage = MutableStateFlow<String?>(null)
     private val _syncProgress = MutableStateFlow(0f)
+    private val _syncIsError = MutableStateFlow(false)
+
+    init {
+        viewModelScope.launch {
+            repository.observeHistory().collect {
+                selectedExerciseId?.let { id ->
+                    progressPoints = repository.progressForExercise(id)
+                }
+            }
+        }
+    }
 
     private val dataFlow = combine(
         repository.observeUserProfile(),
@@ -188,7 +208,8 @@ class ProgressViewModel @Inject constructor(
         _isSyncingHealth,
         _syncStepMessage,
         _syncProgress,
-    ) { data, isSyncing, stepMsg, progress ->
+        _syncIsError,
+    ) { data, isSyncing, stepMsg, progress, isError ->
         ProgressUiState(
             profile = data.profile,
             exercises = data.exercises,
@@ -201,6 +222,8 @@ class ProgressViewModel @Inject constructor(
             isSyncingHealth = isSyncing,
             syncStepMessage = stepMsg,
             syncProgress = progress,
+            syncIsError = isError,
+            isHealthConnectAvailable = healthSyncService.isHealthConnectAvailable(),
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ProgressUiState())
 
@@ -229,8 +252,41 @@ class ProgressViewModel @Inject constructor(
         }
     }
 
+    fun deleteWeightLog(id: String) {
+        viewModelScope.launch { repository.deleteWeightLog(id) }
+    }
+
     fun addPhoto(uri: Uri) {
-        viewModelScope.launch { repository.addProgressPhoto(ProgressPhotoEntity(uri = uri.toString())) }
+        viewModelScope.launch {
+            val persistentUriString = try {
+                val photosDir = File(context.filesDir, "progress_photos").apply { mkdirs() }
+                val targetFile = File(photosDir, "photo_${System.currentTimeMillis()}.jpg")
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    targetFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                targetFile.toURI().toString()
+            } catch (e: Exception) {
+                uri.toString()
+            }
+            repository.addProgressPhoto(ProgressPhotoEntity(uri = persistentUriString))
+        }
+    }
+
+    fun deletePhoto(photo: ProgressPhotoEntity) {
+        viewModelScope.launch {
+            try {
+                val javaUri = java.net.URI(photo.uri)
+                if (javaUri.scheme == "file") {
+                    val file = File(javaUri)
+                    if (file.exists()) file.delete()
+                }
+            } catch (e: Exception) {
+                // Ignore file system errors
+            }
+            repository.deleteProgressPhoto(photo.id)
+        }
     }
 
     fun getGoogleSignInIntent(): Intent = googleAuthService.getSignInIntent()
@@ -281,6 +337,7 @@ class ProgressViewModel @Inject constructor(
     ) {
         viewModelScope.launch {
             _isSyncingHealth.value = true
+            _syncIsError.value = false
             _syncProgress.value = 0.1f
             _syncStepMessage.value = "Initiating Google Health progress link..."
 
@@ -299,9 +356,11 @@ class ProgressViewModel @Inject constructor(
             result.fold(
                 onSuccess = { summary ->
                     _syncStepMessage.value = summary.message
+                    _syncIsError.value = false
                 },
                 onFailure = { error ->
                     _syncStepMessage.value = error.message ?: "Sync encountered an issue"
+                    _syncIsError.value = true
                 }
             )
         }
@@ -314,8 +373,9 @@ class ProgressViewModel @Inject constructor(
         syncSteps: Boolean,
     ) {
         viewModelScope.launch {
+            val currentLinked = state.value.profile.healthConnectLinked
             repository.updateHealthSyncPreferences(
-                linked = true,
+                linked = currentLinked,
                 syncWorkouts = syncWorkouts,
                 syncWeights = syncWeights,
                 syncHydration = syncHydration,
@@ -338,7 +398,7 @@ fun ProgressScreen(viewModel: ProgressViewModel = hiltViewModel()) {
     val context = LocalContext.current
 
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Overview", "Health Link", "Strength & 1RM", "Body & Weight", "Photos")
+    val tabs = listOf("History", "Overview", "Health Link", "Strength & 1RM", "Body & Weight", "Photos")
 
     var showWeightDialog by remember { mutableStateOf(false) }
     var showMeasurementDialog by remember { mutableStateOf(false) }
@@ -459,23 +519,27 @@ fun ProgressScreen(viewModel: ProgressViewModel = hiltViewModel()) {
         // Tab Content
         Box(modifier = Modifier.weight(1f)) {
             when (selectedTab) {
-                0 -> OverviewTab(
+                0 -> WorkoutHistoryScreen(onNavigateBack = null)
+                1 -> OverviewTab(
                     workoutDays = workoutDays,
                     activeDays = activeDaysLast6Weeks,
                     records = state.records,
-                    recentWeights = state.weights.sortedByDescending { it.loggedAt }.take(3),
+                    weights = state.weights,
                     unitSystem = state.profile.unitSystem,
                     profile = state.profile,
                     workoutsCount = state.history.size,
                     weightsCount = state.weights.size,
                     isSyncingHealth = state.isSyncingHealth,
                     syncStepMessage = state.syncStepMessage,
+                    syncIsError = state.syncIsError,
+                    isHealthConnectAvailable = state.isHealthConnectAvailable,
                     onLogWeightClick = { showWeightDialog = true },
+                    onDeleteWeight = viewModel::deleteWeightLog,
                     onSignInGoogle = { signInLauncher.launch(viewModel.getGoogleSignInIntent()) },
                     onSyncProgressToHealth = { viewModel.syncProgressToHealth() },
-                    onOpenHealthLinkTab = { selectedTab = 1 },
+                    onOpenHealthLinkTab = { selectedTab = 2 },
                 )
-                1 -> HealthLinkTab(
+                2 -> HealthLinkTab(
                     profile = state.profile,
                     workoutsCount = state.history.size,
                     weightsCount = state.weights.size,
@@ -483,6 +547,8 @@ fun ProgressScreen(viewModel: ProgressViewModel = hiltViewModel()) {
                     isSyncing = state.isSyncingHealth,
                     syncProgress = state.syncProgress,
                     syncStepMessage = state.syncStepMessage,
+                    syncIsError = state.syncIsError,
+                    isHealthConnectAvailable = state.isHealthConnectAvailable,
                     healthLogs = state.healthLogs,
                     onSignIn = { signInLauncher.launch(viewModel.getGoogleSignInIntent()) },
                     onSignOut = { viewModel.signOutGoogle() },
@@ -492,22 +558,24 @@ fun ProgressScreen(viewModel: ProgressViewModel = hiltViewModel()) {
                     },
                     onOpenSystemHealthConnect = { viewModel.openHealthConnectSettings(context) },
                 )
-                2 -> StrengthTab(
+                3 -> StrengthTab(
                     exercises = state.exercises,
                     selectedExerciseId = viewModel.selectedExerciseId,
                     onSelectExercise = viewModel::selectExercise,
                     progressPoints = viewModel.progressPoints
                 )
-                3 -> BodyAndWeightTab(
+                4 -> BodyAndWeightTab(
                     weights = state.weights,
                     measurements = state.measurements,
                     unitSystem = state.profile.unitSystem,
                     onLogWeightClick = { showWeightDialog = true },
+                    onDeleteWeight = viewModel::deleteWeightLog,
                     onLogMeasurementClick = { showMeasurementDialog = true }
                 )
-                4 -> PhotosTab(
+                5 -> PhotosTab(
                     photos = state.photos,
                     onAddPhoto = { photoPicker.launch("image/*") },
+                    onDeletePhoto = viewModel::deletePhoto,
                     onSharePhoto = { uriStr ->
                         val intent = Intent(Intent.ACTION_SEND).apply {
                             type = "image/*"
@@ -525,6 +593,7 @@ fun ProgressScreen(viewModel: ProgressViewModel = hiltViewModel()) {
     if (showWeightDialog) {
         LogWeightDialog(
             unitSystem = state.profile.unitSystem,
+            currentWeight = state.weights.maxByOrNull { it.loggedAt }?.weightKg ?: state.profile.weightKg,
             onDismiss = { showWeightDialog = false },
             onConfirm = { weightKg ->
                 viewModel.addWeightLog(weightKg)
@@ -538,6 +607,7 @@ fun ProgressScreen(viewModel: ProgressViewModel = hiltViewModel()) {
         LogMeasurementDialog(
             unitSystem = state.profile.unitSystem,
             currentWeight = state.weights.maxByOrNull { it.loggedAt }?.weightKg ?: state.profile.weightKg,
+            latestMeasurement = state.measurements.maxByOrNull { it.loggedAt },
             onDismiss = { showMeasurementDialog = false },
             onSave = { measurement ->
                 viewModel.addMeasurement(measurement)
@@ -557,34 +627,23 @@ private fun OverviewTab(
     workoutDays: Set<LocalDate>,
     activeDays: Int,
     records: List<PersonalRecordEntity>,
-    recentWeights: List<WeightLogEntity>,
+    weights: List<WeightLogEntity>,
     unitSystem: UnitSystem,
     profile: UserProfileEntity,
     workoutsCount: Int,
     weightsCount: Int,
     isSyncingHealth: Boolean,
     syncStepMessage: String?,
+    syncIsError: Boolean,
+    isHealthConnectAvailable: Boolean,
     onLogWeightClick: () -> Unit,
+    onDeleteWeight: (String) -> Unit,
     onSignInGoogle: () -> Unit,
     onSyncProgressToHealth: () -> Unit,
     onOpenHealthLinkTab: () -> Unit,
 ) {
     LazyColumn(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        // Google Health Progress Link Showcase Card
-        item {
-            GoogleHealthProgressCard(
-                profile = profile,
-                workoutsCount = workoutsCount,
-                weightsCount = weightsCount,
-                isSyncing = isSyncingHealth,
-                syncStepMessage = syncStepMessage,
-                onSignInGoogle = onSignInGoogle,
-                onSyncProgressToHealth = onSyncProgressToHealth,
-                onOpenHealthLinkTab = onOpenHealthLinkTab,
-            )
-        }
-
-        // Consistency Heatmap Card
+        // 1. Consistency Heatmap Card
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -642,7 +701,17 @@ private fun OverviewTab(
             }
         }
 
-        // Personal Records Showcase
+        // 2. Weight Progression Chart
+        item {
+            WeightLogChartCard(
+                weights = weights,
+                unitSystem = unitSystem,
+                onAddWeight = { onLogWeightClick() },
+                onDeleteWeight = onDeleteWeight,
+            )
+        }
+
+        // 3. Personal Records Showcase
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -680,13 +749,19 @@ private fun OverviewTab(
             }
         }
 
-        // Weight Progression Chart
+        // 4. Google Health Progress Link Showcase Card (Bottom)
         item {
-            WeightLogChartCard(
-                weights = recentWeights,
-                unitSystem = unitSystem,
-                onAddWeight = { onLogWeightClick() },
-                onDeleteWeight = null,
+            GoogleHealthProgressCard(
+                profile = profile,
+                workoutsCount = workoutsCount,
+                weightsCount = weightsCount,
+                isSyncing = isSyncingHealth,
+                syncStepMessage = syncStepMessage,
+                syncIsError = syncIsError,
+                isHealthConnectAvailable = isHealthConnectAvailable,
+                onSignInGoogle = onSignInGoogle,
+                onSyncProgressToHealth = onSyncProgressToHealth,
+                onOpenHealthLinkTab = onOpenHealthLinkTab,
             )
         }
     }
@@ -702,10 +777,14 @@ private fun GoogleHealthProgressCard(
     weightsCount: Int,
     isSyncing: Boolean,
     syncStepMessage: String?,
+    syncIsError: Boolean,
+    isHealthConnectAvailable: Boolean,
     onSignInGoogle: () -> Unit,
     onSyncProgressToHealth: () -> Unit,
     onOpenHealthLinkTab: () -> Unit,
 ) {
+    val isLinked = profile.googleLinked && profile.healthConnectLinked && isHealthConnectAvailable
+
     Card(
         modifier = Modifier
             .fillMaxWidth(),
@@ -744,7 +823,7 @@ private fun GoogleHealthProgressCard(
 
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = if (profile.googleLinked && profile.healthConnectLinked) Color(0xFFE8F5E9) else MaterialTheme.colorScheme.surfaceVariant
+                    color = if (isLinked) Color(0xFFE8F5E9) else MaterialTheme.colorScheme.surfaceVariant
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -755,22 +834,36 @@ private fun GoogleHealthProgressCard(
                             modifier = Modifier
                                 .size(6.dp)
                                 .clip(CircleShape)
-                                .background(if (profile.googleLinked && profile.healthConnectLinked) Color(0xFF2E7D32) else Color(0xFF757575))
+                                .background(if (isLinked) Color(0xFF2E7D32) else Color(0xFF757575))
                         )
                         Text(
-                            text = if (profile.googleLinked && profile.healthConnectLinked) "Linked & Synced" else if (profile.googleLinked) "Account Linked" else "Not Linked",
+                            text = if (isLinked) {
+                                "Linked & Synced"
+                            } else if (!isHealthConnectAvailable) {
+                                "Unavailable (Local Only)"
+                            } else if (profile.googleLinked) {
+                                "Account Linked"
+                            } else {
+                                "Not Linked"
+                            },
                             style = MaterialTheme.typography.labelSmall,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (profile.googleLinked && profile.healthConnectLinked) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
+                            color = if (isLinked) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
             }
 
             if (profile.googleLinked && !profile.googleEmail.isNullOrBlank()) {
+                val descriptionText = if (isHealthConnectAvailable) {
+                    "Connected as ${profile.googleEmail}. Your gym workouts, weight records, and hydration are linked with Google Health Connect."
+                } else {
+                    "Connected as ${profile.googleEmail}. Google Health Connect is unavailable on this device. All workouts and progress metrics remain safely stored locally."
+                }
+
                 Text(
-                    text = "Connected as ${profile.googleEmail}. Your gym workouts, weight records, and hydration are linked with Google Health Connect.",
+                    text = descriptionText,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -824,7 +917,7 @@ private fun GoogleHealthProgressCard(
                     Text(
                         text = syncStepMessage,
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF2E7D32),
+                        color = if (syncIsError) MaterialTheme.colorScheme.error else Color(0xFF2E7D32),
                         fontWeight = FontWeight.Medium
                     )
                 }
@@ -882,6 +975,8 @@ private fun HealthLinkTab(
     isSyncing: Boolean,
     syncProgress: Float,
     syncStepMessage: String?,
+    syncIsError: Boolean,
+    isHealthConnectAvailable: Boolean,
     healthLogs: List<HealthSyncLogEntity>,
     onSignIn: () -> Unit,
     onSignOut: () -> Unit,
@@ -889,6 +984,8 @@ private fun HealthLinkTab(
     onUpdatePreferences: (syncWorkouts: Boolean, syncWeights: Boolean, syncHydration: Boolean, syncSteps: Boolean) -> Unit,
     onOpenSystemHealthConnect: () -> Unit,
 ) {
+    val isLinked = profile.healthConnectLinked && isHealthConnectAvailable
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -900,7 +997,7 @@ private fun HealthLinkTab(
                     email = profile.googleEmail,
                     displayName = profile.googleDisplayName ?: "Athlete",
                     photoUrl = profile.googlePhotoUrl,
-                    healthLinked = profile.healthConnectLinked,
+                    healthLinked = isLinked,
                     onSignOut = onSignOut
                 )
             } else {
@@ -940,27 +1037,37 @@ private fun HealthLinkTab(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f, fill = false)) {
                             Text("Google Health Connect Status", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            val lastSyncedText = if (profile.healthLastSyncedAt != null && profile.healthLastSyncedAt > 0) {
-                                SimpleDateFormat("MMM d, yyyy 'at' h:mm a", Locale.getDefault()).format(Date(profile.healthLastSyncedAt))
+                            val statusDetailText = if (!isHealthConnectAvailable) {
+                                "Google Health Connect is not available on this device. All data is safely stored locally."
+                            } else if (profile.healthLastSyncedAt != null && profile.healthLastSyncedAt > 0) {
+                                "Last synchronized: ${SimpleDateFormat("MMM d, yyyy 'at' h:mm a", Locale.getDefault()).format(Date(profile.healthLastSyncedAt))}"
                             } else {
                                 "Never synced"
                             }
                             Text(
-                                "Last synchronized: $lastSyncedText",
+                                statusDetailText,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
 
+                        Spacer(Modifier.width(8.dp))
+
                         Surface(
                             shape = RoundedCornerShape(12.dp),
-                            color = if (profile.healthConnectLinked) Color(0xFFE8F5E9) else MaterialTheme.colorScheme.surfaceVariant
+                            color = if (isLinked) Color(0xFFE8F5E9) else MaterialTheme.colorScheme.surfaceVariant
                         ) {
                             Text(
-                                text = if (profile.healthConnectLinked) "Active Link" else "Link Pending",
-                                color = if (profile.healthConnectLinked) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                text = if (isLinked) {
+                                    "Active Link"
+                                } else if (!isHealthConnectAvailable) {
+                                    "Unavailable (Local Only)"
+                                } else {
+                                    "Link Pending"
+                                },
+                                color = if (isLinked) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -980,8 +1087,18 @@ private fun HealthLinkTab(
                         }
                     } else if (!syncStepMessage.isNullOrBlank()) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF34A853), modifier = Modifier.size(16.dp))
-                            Text(syncStepMessage, style = MaterialTheme.typography.bodySmall, color = Color(0xFF2E7D32), fontWeight = FontWeight.Medium)
+                            Icon(
+                                imageVector = if (syncIsError) Icons.Default.ErrorOutline else Icons.Default.CheckCircle,
+                                contentDescription = if (syncIsError) "Error" else "Success",
+                                tint = if (syncIsError) MaterialTheme.colorScheme.error else Color(0xFF34A853),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                syncStepMessage,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (syncIsError) MaterialTheme.colorScheme.error else Color(0xFF2E7D32),
+                                fontWeight = FontWeight.Medium
+                            )
                         }
                     }
 
@@ -1119,9 +1236,9 @@ private fun HealthLinkTab(
                             )
                         }
                         Icon(
-                            imageVector = Icons.Default.CheckCircle,
-                            contentDescription = "Success",
-                            tint = Color(0xFF34A853),
+                            imageVector = if (log.status == "FAILED" || log.status == "ERROR") Icons.Default.ErrorOutline else Icons.Default.CheckCircle,
+                            contentDescription = if (log.status == "FAILED" || log.status == "ERROR") "Failed" else "Success",
+                            tint = if (log.status == "FAILED" || log.status == "ERROR") MaterialTheme.colorScheme.error else Color(0xFF34A853),
                             modifier = Modifier.size(16.dp)
                         )
                     }
@@ -1287,25 +1404,44 @@ private fun StrengthTab(
                         }
                     }
 
-                    // Key Stats summary for this exercise
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        MiniStat(label = "Peak Weight", value = "${maxWeight.toInt()} kg", modifier = Modifier.weight(1f))
-                        MiniStat(label = "Peak 1RM", value = "${maxOneRm.toInt()} kg", modifier = Modifier.weight(1f))
-                        MiniStat(label = "Peak Volume", value = "${maxVolume.toInt()} kg", modifier = Modifier.weight(1f))
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = "Scope: All-time history from completed workout sets. Estimated 1RM uses Brzycki equation: Weight × (36 / (37 - Reps)).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
                     }
 
-                    Text("Weight Lifted Progression (kg)", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                    LineChartCard(
-                        values = progressPoints.map { it.weight },
-                        lineColor = MaterialTheme.colorScheme.primary
-                    )
+                    if (progressPoints.isEmpty()) {
+                        EmptyState(
+                            title = "No logged sets for ${selectedExercise?.name ?: "this exercise"}",
+                            detail = "Record your sets during workout sessions to view your strength and 1RM progress curves here."
+                        )
+                    } else {
+                        // Key Stats summary for this exercise
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            MiniStat(label = "Peak Weight", value = "${maxWeight.toInt()} kg", modifier = Modifier.weight(1f))
+                            MiniStat(label = "Peak 1RM", value = "${maxOneRm.toInt()} kg", modifier = Modifier.weight(1f))
+                            MiniStat(label = "Peak Volume", value = "${maxVolume.toInt()} kg", modifier = Modifier.weight(1f))
+                        }
 
-                    Spacer(Modifier.height(4.dp))
-                    Text("Session Volume Trend (kg)", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                    LineChartCard(
-                        values = progressPoints.map { it.volume },
-                        lineColor = MaterialTheme.colorScheme.secondary
-                    )
+                        Text("Weight Lifted Progression (kg)", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                        LineChartCard(
+                            values = progressPoints.map { it.weight },
+                            lineColor = MaterialTheme.colorScheme.primary
+                        )
+
+                        Spacer(Modifier.height(4.dp))
+                        Text("Session Volume Trend (kg)", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                        LineChartCard(
+                            values = progressPoints.map { it.volume },
+                            lineColor = MaterialTheme.colorScheme.secondary
+                        )
+                    }
                 }
             }
         }
@@ -1321,11 +1457,10 @@ private fun BodyAndWeightTab(
     measurements: List<BodyMeasurementEntity>,
     unitSystem: UnitSystem,
     onLogWeightClick: () -> Unit,
+    onDeleteWeight: (String) -> Unit,
     onLogMeasurementClick: () -> Unit,
 ) {
-    val chronologicalWeights = remember(weights) { weights.sortedBy { it.loggedAt } }
     val unitLabel = if (unitSystem == UnitSystem.METRIC) "kg" else "lb"
-    val multiplier = if (unitSystem == UnitSystem.METRIC) 1.0 else 2.20462
 
     LazyColumn(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         // Weight Progression Chart Card
@@ -1334,7 +1469,7 @@ private fun BodyAndWeightTab(
                 weights = weights,
                 unitSystem = unitSystem,
                 onAddWeight = { onLogWeightClick() },
-                onDeleteWeight = null,
+                onDeleteWeight = onDeleteWeight,
             )
         }
 
@@ -1406,13 +1541,16 @@ private fun BodyAndWeightTab(
                                 Text("Weight: ${String.format(Locale.getDefault(), "%.1f", if (unitSystem == UnitSystem.METRIC) w else w * 2.20462)} $unitLabel", style = MaterialTheme.typography.bodySmall)
                             }
                             m.waistCm?.let { waist ->
-                                Text("• Waist: ${waist.toInt()} cm", style = MaterialTheme.typography.bodySmall)
+                                val disp = if (unitSystem == UnitSystem.METRIC) "${waist.toInt()} cm" else String.format(Locale.getDefault(), "%.1f in", waist / 2.54)
+                                Text("• Waist: $disp", style = MaterialTheme.typography.bodySmall)
                             }
                             m.chestCm?.let { chest ->
-                                Text("• Chest: ${chest.toInt()} cm", style = MaterialTheme.typography.bodySmall)
+                                val disp = if (unitSystem == UnitSystem.METRIC) "${chest.toInt()} cm" else String.format(Locale.getDefault(), "%.1f in", chest / 2.54)
+                                Text("• Chest: $disp", style = MaterialTheme.typography.bodySmall)
                             }
                             m.armsCm?.let { arms ->
-                                Text("• Arms: ${arms.toInt()} cm", style = MaterialTheme.typography.bodySmall)
+                                val disp = if (unitSystem == UnitSystem.METRIC) "${arms.toInt()} cm" else String.format(Locale.getDefault(), "%.1f in", arms / 2.54)
+                                Text("• Arms: $disp", style = MaterialTheme.typography.bodySmall)
                             }
                         }
                     }
@@ -1429,8 +1567,35 @@ private fun BodyAndWeightTab(
 private fun PhotosTab(
     photos: List<ProgressPhotoEntity>,
     onAddPhoto: () -> Unit,
+    onDeletePhoto: (ProgressPhotoEntity) -> Unit,
     onSharePhoto: (String) -> Unit,
 ) {
+    var photoToDelete by remember { mutableStateOf<ProgressPhotoEntity?>(null) }
+
+    if (photoToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { photoToDelete = null },
+            title = { Text("Delete Progress Photo") },
+            text = { Text("Are you sure you want to delete this progress photo? This action cannot be undone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        photoToDelete?.let { onDeletePhoto(it) }
+                        photoToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { photoToDelete = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     LazyColumn(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
             Row(
@@ -1481,8 +1646,13 @@ private fun PhotosTab(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(dateStr, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
-                            IconButton(onClick = { onSharePhoto(photo.uri) }, modifier = Modifier.size(32.dp)) {
-                                Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(18.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                IconButton(onClick = { onSharePhoto(photo.uri) }, modifier = Modifier.size(32.dp)) {
+                                    Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(18.dp))
+                                }
+                                IconButton(onClick = { photoToDelete = photo }, modifier = Modifier.size(32.dp)) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete photo", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                                }
                             }
                         }
 
@@ -1596,22 +1766,35 @@ private fun PersonalRecordCard(record: PersonalRecordEntity, unitSystem: UnitSys
 @Composable
 private fun LogWeightDialog(
     unitSystem: UnitSystem,
+    currentWeight: Double = 75.0,
     onDismiss: () -> Unit,
     onConfirm: (weightKg: Double) -> Unit,
 ) {
-    var weightInput by remember { mutableStateOf("75.0") }
     val unitLabel = if (unitSystem == UnitSystem.METRIC) "kg" else "lb"
+    val initialDisplay = if (currentWeight > 0.0) {
+        val disp = if (unitSystem == UnitSystem.METRIC) currentWeight else currentWeight * 2.20462
+        String.format(Locale.getDefault(), "%.1f", disp)
+    } else ""
+    var weightInput by remember { mutableStateOf(initialDisplay) }
+    val parsed = weightInput.toDoubleOrNull()
+    val isValid = parsed != null && parsed > 0.0 && parsed < 1000.0
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Log Bodyweight") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = weightInput,
                     onValueChange = { weightInput = it },
                     label = { Text("Weight ($unitLabel)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    isError = weightInput.isNotEmpty() && !isValid,
+                    supportingText = {
+                        if (weightInput.isNotEmpty() && !isValid) {
+                            Text("Please enter a valid weight > 0", color = MaterialTheme.colorScheme.error)
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
@@ -1620,10 +1803,12 @@ private fun LogWeightDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    val raw = weightInput.toDoubleOrNull() ?: 75.0
-                    val weightKg = if (unitSystem == UnitSystem.METRIC) raw else raw / 2.20462
-                    onConfirm(weightKg)
-                }
+                    if (parsed != null && isValid) {
+                        val weightKg = if (unitSystem == UnitSystem.METRIC) parsed else parsed / 2.20462
+                        onConfirm(weightKg)
+                    }
+                },
+                enabled = isValid
             ) {
                 Text("Save Weigh-in")
             }
@@ -1638,17 +1823,53 @@ private fun LogWeightDialog(
 private fun LogMeasurementDialog(
     unitSystem: UnitSystem,
     currentWeight: Double,
+    latestMeasurement: BodyMeasurementEntity? = null,
     onDismiss: () -> Unit,
     onSave: (BodyMeasurementEntity) -> Unit,
 ) {
-    val unitLabel = if (unitSystem == UnitSystem.METRIC) "kg" else "lb"
-    val displayW = if (unitSystem == UnitSystem.METRIC) currentWeight else currentWeight * 2.20462
+    val weightUnitLabel = if (unitSystem == UnitSystem.METRIC) "kg" else "lb"
+    val lengthUnitLabel = if (unitSystem == UnitSystem.METRIC) "cm" else "in"
+    val lengthMultiplier = if (unitSystem == UnitSystem.METRIC) 1.0 else (1.0 / 2.54)
 
-    var weightStr by remember { mutableStateOf(String.format(Locale.getDefault(), "%.1f", displayW)) }
-    var bodyFatStr by remember { mutableStateOf("15.0") }
-    var waistStr by remember { mutableStateOf("82.0") }
-    var chestStr by remember { mutableStateOf("100.0") }
-    var armsStr by remember { mutableStateOf("36.0") }
+    val initialWeight = if (currentWeight > 0.0) {
+        val disp = if (unitSystem == UnitSystem.METRIC) currentWeight else currentWeight * 2.20462
+        String.format(Locale.getDefault(), "%.1f", disp)
+    } else ""
+
+    fun formatLength(cm: Double?): String {
+        if (cm == null || cm <= 0.0) return ""
+        val disp = cm * lengthMultiplier
+        return String.format(Locale.getDefault(), "%.1f", disp)
+    }
+
+    var weightStr by remember { mutableStateOf(initialWeight) }
+    var bodyFatStr by remember { mutableStateOf(latestMeasurement?.bodyFatPercent?.let { String.format(Locale.getDefault(), "%.1f", it) } ?: "") }
+    var waistStr by remember { mutableStateOf(formatLength(latestMeasurement?.waistCm)) }
+    var chestStr by remember { mutableStateOf(formatLength(latestMeasurement?.chestCm)) }
+    var armsStr by remember { mutableStateOf(formatLength(latestMeasurement?.armsCm)) }
+
+    val parsedWeight = weightStr.toDoubleOrNull()
+    val isWeightValid = weightStr.isBlank() || (parsedWeight != null && parsedWeight > 0.0 && parsedWeight < 1000.0)
+
+    val parsedBodyFat = bodyFatStr.toDoubleOrNull()
+    val isBodyFatValid = bodyFatStr.isBlank() || (parsedBodyFat != null && parsedBodyFat > 0.0 && parsedBodyFat <= 100.0)
+
+    val parsedWaist = waistStr.toDoubleOrNull()
+    val isWaistValid = waistStr.isBlank() || (parsedWaist != null && parsedWaist > 0.0 && parsedWaist < 500.0)
+
+    val parsedChest = chestStr.toDoubleOrNull()
+    val isChestValid = chestStr.isBlank() || (parsedChest != null && parsedChest > 0.0 && parsedChest < 500.0)
+
+    val parsedArms = armsStr.toDoubleOrNull()
+    val isArmsValid = armsStr.isBlank() || (parsedArms != null && parsedArms > 0.0 && parsedArms < 200.0)
+
+    val hasAnyEntry = (weightStr.isNotBlank() && isWeightValid) ||
+            (bodyFatStr.isNotBlank() && isBodyFatValid) ||
+            (waistStr.isNotBlank() && isWaistValid) ||
+            (chestStr.isNotBlank() && isChestValid) ||
+            (armsStr.isNotBlank() && isArmsValid)
+
+    val allFieldsValid = isWeightValid && isBodyFatValid && isWaistValid && isChestValid && isArmsValid && hasAnyEntry
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1659,8 +1880,9 @@ private fun LogMeasurementDialog(
                     OutlinedTextField(
                         value = weightStr,
                         onValueChange = { weightStr = it },
-                        label = { Text("Weight ($unitLabel)") },
+                        label = { Text("Weight ($weightUnitLabel)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        isError = !isWeightValid,
                         modifier = Modifier.weight(1f),
                         singleLine = true
                     )
@@ -1669,6 +1891,7 @@ private fun LogMeasurementDialog(
                         onValueChange = { bodyFatStr = it },
                         label = { Text("Body Fat %") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        isError = !isBodyFatValid,
                         modifier = Modifier.weight(1f),
                         singleLine = true
                     )
@@ -1677,46 +1900,58 @@ private fun LogMeasurementDialog(
                     OutlinedTextField(
                         value = waistStr,
                         onValueChange = { waistStr = it },
-                        label = { Text("Waist (cm)") },
+                        label = { Text("Waist ($lengthUnitLabel)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        isError = !isWaistValid,
                         modifier = Modifier.weight(1f),
                         singleLine = true
                     )
                     OutlinedTextField(
                         value = chestStr,
                         onValueChange = { chestStr = it },
-                        label = { Text("Chest (cm)") },
+                        label = { Text("Chest ($lengthUnitLabel)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        isError = !isChestValid,
                         modifier = Modifier.weight(1f),
                         singleLine = true
                     )
                     OutlinedTextField(
                         value = armsStr,
                         onValueChange = { armsStr = it },
-                        label = { Text("Arms (cm)") },
+                        label = { Text("Arms ($lengthUnitLabel)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        isError = !isArmsValid,
                         modifier = Modifier.weight(1f),
                         singleLine = true
                     )
+                }
+                if (!allFieldsValid && (weightStr.isNotBlank() || bodyFatStr.isNotBlank() || waistStr.isNotBlank() || chestStr.isNotBlank() || armsStr.isNotBlank())) {
+                    Text("Please enter valid positive numbers.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    val rawW = weightStr.toDoubleOrNull() ?: currentWeight
-                    val wKg = if (unitSystem == UnitSystem.METRIC) rawW else rawW / 2.20462
-                    onSave(
-                        BodyMeasurementEntity(
-                            weightKg = wKg,
-                            bodyFatPercent = bodyFatStr.toDoubleOrNull(),
-                            waistCm = waistStr.toDoubleOrNull(),
-                            chestCm = chestStr.toDoubleOrNull(),
-                            armsCm = armsStr.toDoubleOrNull(),
-                            loggedAt = System.currentTimeMillis()
+                    if (allFieldsValid) {
+                        val toCmMultiplier = if (unitSystem == UnitSystem.METRIC) 1.0 else 2.54
+                        val wKg = if (parsedWeight != null && parsedWeight > 0.0) {
+                            if (unitSystem == UnitSystem.METRIC) parsedWeight else parsedWeight / 2.20462
+                        } else null
+
+                        onSave(
+                            BodyMeasurementEntity(
+                                weightKg = wKg,
+                                bodyFatPercent = if (parsedBodyFat != null && parsedBodyFat > 0.0) parsedBodyFat else null,
+                                waistCm = if (parsedWaist != null && parsedWaist > 0.0) parsedWaist * toCmMultiplier else null,
+                                chestCm = if (parsedChest != null && parsedChest > 0.0) parsedChest * toCmMultiplier else null,
+                                armsCm = if (parsedArms != null && parsedArms > 0.0) parsedArms * toCmMultiplier else null,
+                                loggedAt = System.currentTimeMillis()
+                            )
                         )
-                    )
-                }
+                    }
+                },
+                enabled = allFieldsValid
             ) {
                 Text("Save")
             }
