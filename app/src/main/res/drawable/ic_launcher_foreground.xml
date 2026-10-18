@@ -4,11 +4,18 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path
-        android:fillColor="@color/splash_foreground"
-        android:pathData="M17,47h12v14H17zM79,47h12v14H79zM33,39h8v30h-8zM67,39h8v30h-8zM43,49h22v10H43z" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:fillAlpha="0.92"
-        android:pathData="M26,31h8v46h-8zM74,31h8v46h-8z" />
+    <!-- RF artwork traced from docs/brand/rep-forge-logo-v2.png.
+         Keep the silhouette inside the adaptive icon's central safe area. -->
+    <group
+        android:scaleX="0.063"
+        android:scaleY="0.063"
+        android:translateX="14.53"
+        android:translateY="14.47">
+        <path
+            android:fillColor="@color/splash_foreground"
+            android:pathData="M393,279 L800,279 C922,279 1011,378 1011,508 C1011,630 925,718 807,727 L1006,976 L788,976 L574,715 L704,584 L766,584 C808,584 839,553 839,510 C839,465 808,436 766,436 L242,436 Z" />
+        <path
+            android:fillColor="@color/splash_foreground"
+            android:pathData="M247,497 L738,497 L637,597 L412,597 L412,656 L590,656 L484,762 L412,762 L412,976 L247,976 Z" />
+    </group>
 </vector>
