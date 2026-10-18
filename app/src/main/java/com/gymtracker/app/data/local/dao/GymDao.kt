@@ -298,6 +298,12 @@ interface GymDao {
         now: Long = System.currentTimeMillis(),
     )
 
+    @Query("DELETE FROM weekly_schedule WHERE id = :id")
+    suspend fun deleteSchedule(id: String)
+
+    @Query("DELETE FROM weekly_schedule WHERE weekDay = :weekDay")
+    suspend fun deleteScheduleForDay(weekDay: com.gymtracker.app.data.local.entity.WeekDay)
+
     @Query("DELETE FROM weekly_schedule")
     suspend fun clearSchedules()
 
@@ -318,6 +324,9 @@ interface GymDao {
 
     @Query("DELETE FROM nutrition_logs")
     suspend fun clearNutritionLogs()
+
+    @Query("DELETE FROM progress_photos WHERE id = :id")
+    suspend fun deleteProgressPhoto(id: String)
 
     @Query("DELETE FROM progress_photos")
     suspend fun clearProgressPhotos()

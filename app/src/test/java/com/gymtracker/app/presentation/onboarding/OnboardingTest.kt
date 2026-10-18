@@ -59,11 +59,11 @@ class OnboardingTest {
     }
 
     @Test
-    fun testInputValidationLogic() {
+    fun testOptionalMeasurementsValidationLogic() {
         fun validateHeight(heightStr: String, unitSystem: UnitSystem): String? {
             val valNum = heightStr.toDoubleOrNull()
             return when {
-                heightStr.isBlank() -> "Height is required"
+                heightStr.isBlank() -> null // Optional!
                 valNum == null || valNum <= 0 -> "Enter a valid positive number"
                 unitSystem == UnitSystem.METRIC && (valNum < 50.0 || valNum > 280.0) -> "Must be between 50 and 280 cm"
                 unitSystem == UnitSystem.IMPERIAL && (valNum < 20.0 || valNum > 110.0) -> "Must be between 20 and 110 inches"
@@ -71,14 +71,32 @@ class OnboardingTest {
             }
         }
 
-        assertNotNull(validateHeight("", UnitSystem.METRIC))
+        // Blank string is optional (valid, returns null error)
+        assertNull(validateHeight("", UnitSystem.METRIC))
+        assertNull(validateHeight("   ", UnitSystem.METRIC))
+
+        // Invalid inputs return error text
         assertNotNull(validateHeight("abc", UnitSystem.METRIC))
         assertNotNull(validateHeight("-5", UnitSystem.METRIC))
         assertNotNull(validateHeight("10", UnitSystem.METRIC))
-        assertNull(validateHeight("175", UnitSystem.METRIC))
 
+        // Valid inputs return null error
+        assertNull(validateHeight("175", UnitSystem.METRIC))
         assertNull(validateHeight("70", UnitSystem.IMPERIAL))
         assertNotNull(validateHeight("150", UnitSystem.IMPERIAL))
+    }
+
+    @Test
+    fun testFiveStepNavigationBounds() {
+        fun coerceStep(step: Int): Int = step.coerceIn(0, 4)
+
+        assertEquals(0, coerceStep(-1))
+        assertEquals(0, coerceStep(0))
+        assertEquals(1, coerceStep(1))
+        assertEquals(2, coerceStep(2))
+        assertEquals(3, coerceStep(3))
+        assertEquals(4, coerceStep(4))
+        assertEquals(4, coerceStep(5))
     }
 
     @Test

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,11 +21,13 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.MonitorWeight
@@ -43,6 +46,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -56,7 +60,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -65,7 +74,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.gymtracker.app.data.local.entity.ExerciseEntity
 import com.gymtracker.app.data.local.entity.MuscleGroup
+import com.gymtracker.app.data.local.entity.NutritionLogEntity
 import com.gymtracker.app.data.local.entity.ReminderEntity
+import com.gymtracker.app.data.local.entity.SessionStatus
+import com.gymtracker.app.data.local.entity.UnitSystem
 import com.gymtracker.app.data.local.entity.UserProfileEntity
 import com.gymtracker.app.data.local.entity.WaterLogEntity
 import com.gymtracker.app.data.local.entity.WeekDay
@@ -82,15 +94,18 @@ import com.gymtracker.app.domain.usecase.DynamicWarmUpCatalog
 import com.gymtracker.app.domain.usecase.WorkoutTemplateCatalog
 import com.gymtracker.app.notification.WorkoutSoundPlayer
 import com.gymtracker.app.presentation.components.DynamicWarmUpCard
-import com.gymtracker.app.presentation.warmup.DynamicWarmUpPlayerModal
-import com.gymtracker.app.presentation.components.WeightLogChartCard
-import com.gymtracker.app.presentation.components.GoogleLogoIcon
 import com.gymtracker.app.presentation.components.EmptyState
+import com.gymtracker.app.presentation.components.GoogleLogoIcon
 import com.gymtracker.app.presentation.components.MetricCard
-import com.gymtracker.app.presentation.components.SectionTitle
+import com.gymtracker.app.presentation.components.WeightLogChartCard
+import com.gymtracker.app.presentation.warmup.DynamicWarmUpPlayerModal
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.DayOfWeek
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -104,6 +119,8 @@ data class DaySchedulePlan(
     val isToday: Boolean,
     val scheduledWorkout: WeeklyScheduleEntity?,
     val workoutEntity: WorkoutEntity?,
+    val isCompleted: Boolean = false,
+    val completedWorkoutName: String? = null,
 )
 
 data class DashboardUiState(
@@ -120,11 +137,29 @@ data class DashboardUiState(
     val history: List<WorkoutSessionEntity> = emptyList(),
     val weights: List<WeightLogEntity> = emptyList(),
     val todayWater: WaterLogEntity? = null,
+    val todayNutrition: NutritionLogEntity? = null,
     val reminders: List<ReminderEntity> = emptyList(),
     val todayWarmUpRoutine: DynamicWarmUpRoutine? = null,
     val exercises: List<ExerciseEntity> = emptyList(),
     val workoutExercises: List<WorkoutExerciseEntity> = emptyList(),
-)
+) {
+    fun getExerciseCount(workoutId: String?): Int {
+        if (workoutId == null) return 0
+        return workoutExercises.count { it.workoutId == workoutId }
+    }
+
+    fun getExpectedDurationMinutes(workoutId: String?): Int {
+        if (workoutId == null) return 0
+        val count = getExerciseCount(workoutId)
+        if (count == 0) return 0
+        val pastSessions = history.filter { it.workoutId == workoutId && it.durationSeconds > 0 }
+        if (pastSessions.isNotEmpty()) {
+            val avgMins = (pastSessions.map { it.durationSeconds }.average() / 60.0).toInt()
+            if (avgMins > 0) return avgMins
+        }
+        return count * 8
+    }
+}
 
 @HiltViewModel
 class DashboardViewModel @Inject constructor(
@@ -150,6 +185,7 @@ class DashboardViewModel @Inject constructor(
         repository.observeHistory(),
         repository.observeWeightLogs(),
         repository.observeWater(LocalDate.now().toEpochDay()),
+        repository.observeNutritionLog(LocalDate.now().toEpochDay()),
         repository.observeReminders(),
         repository.observeExercises(),
         repository.observeAllWorkoutExercises(),
@@ -165,12 +201,13 @@ class DashboardViewModel @Inject constructor(
         @Suppress("UNCHECKED_CAST")
         val weights = array[5] as? List<WeightLogEntity> ?: emptyList()
         val water = array[6] as? WaterLogEntity
+        val nutrition = array[7] as? NutritionLogEntity
         @Suppress("UNCHECKED_CAST")
-        val reminders = array[7] as? List<ReminderEntity> ?: emptyList()
+        val reminders = array[8] as? List<ReminderEntity> ?: emptyList()
         @Suppress("UNCHECKED_CAST")
-        val exercises = array[8] as? List<ExerciseEntity> ?: emptyList()
+        val exercises = array[9] as? List<ExerciseEntity> ?: emptyList()
         @Suppress("UNCHECKED_CAST")
-        val workoutExercises = array[9] as? List<WorkoutExerciseEntity> ?: emptyList()
+        val workoutExercises = array[10] as? List<WorkoutExerciseEntity> ?: emptyList()
 
         val profile = profileEntity ?: UserProfileEntity()
         val preferredSplit = profile.preferredSplit.ifBlank { "Push Pull Legs (PPL)" }
@@ -200,17 +237,34 @@ class DashboardViewModel @Inject constructor(
             WeekDay.SUNDAY,
         )
 
-        val weeklyPlan = weekDaysOrdered.map { d ->
+        val todayLocalDate = LocalDate.now()
+        val currentDayOfWeekValue = todayLocalDate.dayOfWeek.value // 1 (Mon) to 7 (Sun)
+        val mondayLocalDate = todayLocalDate.minusDays((currentDayOfWeekValue - 1).toLong())
+
+        val weeklyPlan = weekDaysOrdered.mapIndexed { idx, d ->
             val item = schedule.firstOrNull { it.weekDay == d }
             val workout = item?.let { sched ->
                 allWorkouts.firstOrNull { it.id == sched.workoutId }
                     ?: allWorkouts.firstOrNull { it.name.equals(sched.workoutName, ignoreCase = true) }
             }
+            val dayLocalDate = mondayLocalDate.plusDays(idx.toLong())
+            val dayEpoch = dayLocalDate.toEpochDay()
+
+            val completedSession = history.firstOrNull { session ->
+                session.status == SessionStatus.COMPLETED &&
+                    Instant.ofEpochMilli(session.startedAt)
+                        .atZone(ZoneId.systemDefault())
+                        .toLocalDate()
+                        .toEpochDay() == dayEpoch
+            }
+
             DaySchedulePlan(
                 day = d,
                 isToday = d == todayWeekDay,
                 scheduledWorkout = item,
                 workoutEntity = workout,
+                isCompleted = completedSession != null,
+                completedWorkoutName = completedSession?.workoutName,
             )
         }
 
@@ -249,6 +303,7 @@ class DashboardViewModel @Inject constructor(
             history = history.take(5),
             weights = weights,
             todayWater = water,
+            todayNutrition = nutrition,
             reminders = reminders,
             todayWarmUpRoutine = todayWarmUpRoutine,
             exercises = exercises,
@@ -311,21 +366,30 @@ fun DashboardScreen(
     LaunchedEffect(state.history, state.activeSession) { viewModel.refreshStats() }
 
     val todayFormattedName = state.todayWeekDay.name.lowercase().replaceFirstChar { it.titlecase() }
+    val todayDateFormatted = remember {
+        LocalDate.now().format(DateTimeFormatter.ofPattern("EEEE, MMM d", Locale.getDefault()))
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        // -------------------------------------------------------------
+        // 1. DATE / HEADER
+        // -------------------------------------------------------------
         item {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Dashboard", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Today", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     Surface(
                         shape = RoundedCornerShape(6.dp),
                         color = MaterialTheme.colorScheme.primaryContainer,
                     ) {
                         Text(
-                            "Today: $todayFormattedName",
+                            todayDateFormatted,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
@@ -337,7 +401,7 @@ fun DashboardScreen(
                         color = MaterialTheme.colorScheme.secondaryContainer,
                     ) {
                         Text(
-                            state.profile.preferredSplit,
+                            state.profile.preferredSplit.ifBlank { "Push Pull Legs (PPL)" },
                             color = MaterialTheme.colorScheme.onSecondaryContainer,
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 12.sp,
@@ -352,7 +416,7 @@ fun DashboardScreen(
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                             ) {
                                 GoogleLogoIcon(Modifier.size(12.dp))
                                 Text(
@@ -368,195 +432,46 @@ fun DashboardScreen(
             }
         }
 
-        // Stats Row
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                MetricCard("This week", "${viewModel.stats.weeklySessions}", Modifier.weight(1f))
-                MetricCard("Volume", "${viewModel.stats.weeklyVolume.toInt()} kg", Modifier.weight(1f), MaterialTheme.colorScheme.secondary)
-                MetricCard("Streak", "${viewModel.stats.streakDays} d", Modifier.weight(1f), MaterialTheme.colorScheme.tertiary)
-            }
-        }
-
         // -------------------------------------------------------------
-        // IN-APP NOTIFICATION FOR DAILY REMINDERS
+        // 2. ACTIVE OR PLANNED WORKOUT HERO (DOMINANT NEXT ACTION)
         // -------------------------------------------------------------
         item {
-            InAppDailyRemindersCard(
+            TodayWorkoutHeroCard(
                 state = state,
-                onAddWater = viewModel::addWater,
-                onOpenNutrition = onOpenNutrition,
-                onLogWeight = viewModel::addWeight
+                onOpenWorkout = onOpenWorkout,
+                onStartWorkout = onStartWorkout,
+                onOpenWorkouts = onOpenWorkouts,
+                onStartWarmUp = { routine -> activeWarmUpRoutine = routine },
             )
         }
 
         // -------------------------------------------------------------
-        // HERO CARD: WORKOUT ACCORDING TO TODAY & SELECTED SPLIT
+        // 3. COMPACT WEEKLY CONSISTENCY ROW (Mon - Sun)
         // -------------------------------------------------------------
-        state.activeSession?.let { session ->
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                    border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary),
-                ) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("Workout in progress", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = MaterialTheme.colorScheme.primary,
-                            ) {
-                                Text(
-                                    "ACTIVE",
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 11.sp,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                )
-                            }
-                        }
-                        Text(session.workoutName, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                        Button(
-                            onClick = { onOpenWorkout(session.id) },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(8.dp),
-                        ) {
-                            Text("⚡ Resume Active Workout", fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-            }
-        } ?: run {
-            if (state.todayWorkout != null) {
-                // Scheduled Workout for Today!
-                val todayWorkout = state.todayWorkout!!
-                item {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary),
-                    ) {
-                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Icon(Icons.Default.CalendarToday, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                                    Text("Today's Workout ($todayFormattedName)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                }
-                                Surface(
-                                    shape = RoundedCornerShape(4.dp),
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                ) {
-                                    Text(
-                                        todayWorkout.splitType,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 11.sp,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                    )
-                                }
-                            }
-                            Text(todayWorkout.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                            if (todayWorkout.description.isNotBlank()) {
-                                Text(
-                                    todayWorkout.description,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Button(
-                                onClick = { onStartWorkout(todayWorkout.id) },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(8.dp),
-                            ) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = null)
-                                Spacer(Modifier.width(6.dp))
-                                Text("⚡ Start Today's Workout (${todayWorkout.name})", fontWeight = FontWeight.Bold)
-                            }
-                            state.todayWarmUpRoutine?.let { routine ->
-                                OutlinedButton(
-                                    onClick = { activeWarmUpRoutine = routine },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.outlinedButtonColors(
-                                        contentColor = Color(0xFFFF6F00),
-                                    ),
-                                    border = BorderStroke(1.dp, Color(0xFFFF6F00)),
-                                ) {
-                                    Icon(Icons.Default.Whatshot, contentDescription = null, tint = Color(0xFFFF6F00))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("🔥 Warm-Up First (${routine.primaryMuscleGroup.label()} • ~${routine.estimatedDurationMinutes}m)", fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                // Rest & Recovery Day for Today!
-                item {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                    ) {
-                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Icon(Icons.Default.SelfImprovement, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(20.dp))
-                                    Text("Today is $todayFormattedName • Rest Day", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                }
-                                Surface(
-                                    shape = RoundedCornerShape(4.dp),
-                                    color = MaterialTheme.colorScheme.secondaryContainer,
-                                ) {
-                                    Text(
-                                        "REST & RECOVERY",
-                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 10.sp,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                    )
-                                }
-                            }
-                            Text(
-                                "Your ${state.profile.preferredSplit} schedule has today set as a recovery day. Muscles grow and repair during rest! Hydrate and focus on your daily nutrition.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            if (state.nextScheduledWorkout != null) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Text("Next workout:", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
-                                    Text(
-                                        "${state.nextScheduledDayName} • ${state.nextScheduledWorkout!!.name}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontWeight = FontWeight.Bold,
-                                    )
-                                }
-                                Button(
-                                    onClick = { onStartWorkout(state.nextScheduledWorkout!!.id) },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
-                                    shape = RoundedCornerShape(8.dp),
-                                ) {
-                                    Text("Start Next Workout Early (${state.nextScheduledWorkout!!.name})", fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        item {
+            WeeklyConsistencyRow(
+                weeklyPlan = state.weeklyPlan,
+                preferredSplit = state.profile.preferredSplit,
+                onStartWorkout = onStartWorkout,
+                onOpenWorkouts = onOpenWorkouts,
+            )
         }
 
-        // Dynamic Warm-Up Recommendation Card based on Scheduled Workout's Muscle Group
+        // -------------------------------------------------------------
+        // 4. NUTRITION AND BODY-LOG SHORTCUTS
+        // -------------------------------------------------------------
+        item {
+            NutritionAndBodyLogShortcutsCard(
+                state = state,
+                onAddWater = viewModel::addWater,
+                onOpenNutrition = onOpenNutrition,
+                onLogWeight = viewModel::addWeight,
+            )
+        }
+
+        // -------------------------------------------------------------
+        // 5. OPTIONAL COACH SUGGESTION (DYNAMIC WARM-UP / GEMINI AI COACH)
+        // -------------------------------------------------------------
         state.todayWarmUpRoutine?.let { warmUpRoutine ->
             item {
                 DynamicWarmUpCard(
@@ -569,133 +484,16 @@ fun DashboardScreen(
             }
         }
 
-        // -------------------------------------------------------------
-        // WEEKLY DAY-BY-DAY SPLIT STRIP (Mon - Sun)
-        // -------------------------------------------------------------
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column {
-                        Text("Weekly Schedule by Day", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "Routine: ${state.profile.preferredSplit}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    OutlinedButton(
-                        onClick = onOpenWorkouts,
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                        modifier = Modifier.height(30.dp),
-                        shape = RoundedCornerShape(8.dp),
-                    ) {
-                        Text("Planner", fontSize = 11.sp)
-                    }
-                }
-
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    items(state.weeklyPlan) { plan ->
-                        val dayAbbrev = plan.day.name.take(3)
-                        val isToday = plan.isToday
-                        val workoutName = plan.workoutEntity?.name ?: plan.scheduledWorkout?.workoutName
-                        val isRest = workoutName == null
-
-                        OutlinedCard(
-                            onClick = {
-                                plan.workoutEntity?.let { onStartWorkout(it.id) }
-                            },
-                            colors = CardDefaults.outlinedCardColors(
-                                containerColor = when {
-                                    isToday -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-                                    isRest -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-                                    else -> MaterialTheme.colorScheme.surface
-                                },
-                            ),
-                            border = BorderStroke(
-                                width = if (isToday) 2.dp else 1.dp,
-                                color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                            ),
-                            modifier = Modifier.width(108.dp),
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(10.dp),
-                                verticalArrangement = Arrangement.spacedBy(6.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Text(
-                                        dayAbbrev,
-                                        fontWeight = if (isToday) FontWeight.ExtraBold else FontWeight.SemiBold,
-                                        fontSize = 13.sp,
-                                        color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                                    )
-                                    if (isToday) {
-                                        Surface(
-                                            shape = CircleShape,
-                                            color = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(6.dp),
-                                        ) {}
-                                    }
-                                }
-
-                                if (isToday) {
-                                    Surface(
-                                        shape = RoundedCornerShape(4.dp),
-                                        color = MaterialTheme.colorScheme.primary,
-                                    ) {
-                                        Text(
-                                            "TODAY",
-                                            color = Color.White,
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                                        )
-                                    }
-                                }
-
-                                if (!isRest && workoutName != null) {
-                                    Surface(
-                                        shape = RoundedCornerShape(4.dp),
-                                        color = MaterialTheme.colorScheme.secondaryContainer,
-                                    ) {
-                                        Text(
-                                            workoutName.replace(" Day", ""),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
-                                        )
-                                    }
-                                } else {
-                                    Text(
-                                        "Rest",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Gemini AI Coach Banner
         onOpenGemini?.let { openGemini ->
             item {
                 Card(
                     onClick = openGemini,
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+                    modifier = Modifier.semantics {
+                        role = Role.Button
+                        contentDescription = "Gemini AI Coach & Workout Builder. Tap to open AI coach."
+                    },
                 ) {
                     Row(
                         modifier = Modifier.padding(14.dp),
@@ -717,7 +515,18 @@ fun DashboardScreen(
         }
 
         // -------------------------------------------------------------
-        // QUICK START: FILTERED STRICTLY TO USER'S SELECTED SPLIT
+        // 6. SUPPORTING METRIC SUMMARIES (MAX 3 ABOVE SECONDARY DETAIL)
+        // -------------------------------------------------------------
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                MetricCard("This week", "${viewModel.stats.weeklySessions}", Modifier.weight(1f))
+                MetricCard("Volume", "${viewModel.stats.weeklyVolume.toInt()} kg", Modifier.weight(1f), MaterialTheme.colorScheme.secondary)
+                MetricCard("Streak", "${viewModel.stats.streakDays} d", Modifier.weight(1f), MaterialTheme.colorScheme.tertiary)
+            }
+        }
+
+        // -------------------------------------------------------------
+        // SECONDARY DETAILS: SPLIT WORKOUTS LIBRARY
         // -------------------------------------------------------------
         item {
             Row(
@@ -742,7 +551,7 @@ fun DashboardScreen(
                 OutlinedButton(
                     onClick = onOpenWorkouts,
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                    modifier = Modifier.height(34.dp),
+                    modifier = Modifier.height(36.dp).defaultMinSize(minWidth = 48.dp),
                     shape = RoundedCornerShape(8.dp),
                 ) {
                     Text("All Workouts", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
@@ -751,6 +560,8 @@ fun DashboardScreen(
         }
 
         items(state.splitWorkouts, key = { it.id }) { workout ->
+            val exerciseCount = state.getExerciseCount(workout.id)
+            val durationMins = state.getExpectedDurationMinutes(workout.id)
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -777,12 +588,21 @@ fun DashboardScreen(
                             )
                         }
                     }
-                    Text(workout.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (workout.description.isNotBlank()) {
+                        Text(workout.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Text(
+                        if (durationMins > 0) "$exerciseCount exercises • ~$durationMins min" else "$exerciseCount exercises",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        Button(
+                        OutlinedButton(
                             onClick = { onStartWorkout(workout.id) },
                             shape = RoundedCornerShape(6.dp),
                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                            modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 36.dp),
                         ) {
                             Text("Start", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
@@ -795,7 +615,7 @@ fun DashboardScreen(
         item {
             OutlinedButton(
                 onClick = onOpenWorkouts,
-                modifier = Modifier.fillMaxWidth().height(42.dp),
+                modifier = Modifier.fillMaxWidth().height(48.dp),
                 shape = RoundedCornerShape(8.dp),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
             ) {
@@ -881,7 +701,7 @@ fun DashboardScreen(
         }
 
         // -------------------------------------------------------------
-        // RECENT WORKOUT HISTORY
+        // SECONDARY DETAILS: RECENT WORKOUT HISTORY
         // -------------------------------------------------------------
         item {
             Row(
@@ -900,7 +720,7 @@ fun DashboardScreen(
                     OutlinedButton(
                         onClick = onOpenHistory,
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                        modifier = Modifier.height(34.dp),
+                        modifier = Modifier.height(34.dp).defaultMinSize(minWidth = 48.dp),
                         shape = RoundedCornerShape(8.dp),
                     ) {
                         Text("View All", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
@@ -963,276 +783,622 @@ fun DashboardScreen(
     }
 }
 
+/**
+ * Dominant Next Action Hero Card with strict single primary action button.
+ */
 @Composable
-fun InAppDailyRemindersCard(
+fun TodayWorkoutHeroCard(
     state: DashboardUiState,
-    onAddWater: (Int) -> Unit,
-    onOpenNutrition: (() -> Unit)? = null,
-    onLogWeight: (Double) -> Unit,
+    onOpenWorkout: (String) -> Unit,
+    onStartWorkout: (String) -> Unit,
+    onOpenWorkouts: () -> Unit,
+    onStartWarmUp: (DynamicWarmUpRoutine) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var isDismissed by remember { mutableStateOf(false) }
-    var showWeightInput by remember { mutableStateOf(false) }
-    var inputWeightStr by remember { mutableStateOf("") }
+    val activeSession = state.activeSession
+    val todayWorkout = state.todayWorkout
+    val nextScheduledWorkout = state.nextScheduledWorkout
+    val hasSplitWorkouts = state.splitWorkouts.isNotEmpty() || state.otherWorkouts.isNotEmpty()
 
-    if (isDismissed) return
-
-    val currentWater = state.todayWater?.milliliters ?: 0
-    val waterGoal = state.profile.waterGoalMl.coerceAtLeast(1000)
-    val waterProgress = (currentWater.toFloat() / waterGoal.toFloat()).coerceIn(0f, 1f)
-    val hasWorkoutToday = state.todayWorkout != null
-    val isWorkoutActive = state.activeSession != null
-
-    val unitSystem = state.profile.unitSystem
-    val unitLabel = if (unitSystem == com.gymtracker.app.data.local.entity.UnitSystem.METRIC) "kg" else "lb"
-    val multiplier = if (unitSystem == com.gymtracker.app.data.local.entity.UnitSystem.METRIC) 1.0 else 2.20462
-    val latestLog = state.weights.maxByOrNull { it.loggedAt }
-    val currentDisplayW = latestLog?.let { it.weightKg * multiplier } ?: (state.profile.weightKg * multiplier)
-
-    Card(
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
-        modifier = modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            // Header
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+    when {
+        // PRIORITY 1: Active Workout in Progress
+        activeSession != null -> {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary),
+                modifier = modifier.fillMaxWidth(),
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        modifier = Modifier.size(30.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                Icons.Default.NotificationsActive,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    }
-                    Column {
-                        Text(
-                            "Daily Reminders & Check-in",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            "Keep your daily streak and hydration on track",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                IconButton(
-                    onClick = { isDismissed = true },
-                    modifier = Modifier.size(24.dp)
-                ) {
-                    Icon(
-                        Icons.Default.Close,
-                        contentDescription = "Dismiss reminders",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-
-            // Water Reminder section
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Active Workout In Progress", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                        ) {
+                            Text(
+                                "ACTIVE",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            )
+                        }
+                    }
+                    Text(activeSession.workoutName, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Button(
+                        onClick = { onOpenWorkout(activeSession.id) },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        shape = RoundedCornerShape(8.dp),
+                    ) {
+                        Text("⚡ Resume Active Workout", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        // PRIORITY 2: Start Today's Scheduled Workout
+        todayWorkout != null -> {
+            val exerciseCount = state.getExerciseCount(todayWorkout.id)
+            val durationMins = state.getExpectedDurationMinutes(todayWorkout.id)
+            val infoStr = if (durationMins > 0) "$exerciseCount exercises • ~$durationMins min" else "$exerciseCount exercises"
+
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary),
+                modifier = modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Icon(
-                                Icons.Default.WaterDrop,
-                                contentDescription = null,
-                                tint = Color(0xFF29B6F6),
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Text(
-                                "Water & Nutrition",
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 13.sp,
-                                modifier = if (onOpenNutrition != null) Modifier.clickable { onOpenNutrition() } else Modifier,
-                            )
-                        }
-                        Text(
-                            "$currentWater / $waterGoal ml",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (currentWater >= waterGoal) Color(0xFF2E7D32) else MaterialTheme.colorScheme.primary,
-                            modifier = if (onOpenNutrition != null) Modifier.clickable { onOpenNutrition() } else Modifier,
-                        )
-                    }
-
-                    LinearProgressIndicator(
-                        progress = { waterProgress },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(6.dp)
-                            .clip(RoundedCornerShape(3.dp)),
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = { onAddWater(250) },
-                            modifier = Modifier.weight(1f).height(32.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                            shape = RoundedCornerShape(6.dp)
-                        ) {
-                            Text("+250 ml", fontSize = 11.sp)
-                        }
-                        OutlinedButton(
-                            onClick = { onAddWater(500) },
-                            modifier = Modifier.weight(1f).height(32.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                            shape = RoundedCornerShape(6.dp)
-                        ) {
-                            Text("+500 ml", fontSize = 11.sp)
-                        }
-                        if (onOpenNutrition != null) {
-                            Button(
-                                onClick = onOpenNutrition,
-                                modifier = Modifier.weight(1.2f).height(32.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                shape = RoundedCornerShape(6.dp)
-                            ) {
-                                Text("Nutrition", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Workout Reminder status indicator (if today has a workout and not currently in active session)
-            if (hasWorkoutToday && !isWorkoutActive) {
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(
-                                Icons.Default.FitnessCenter,
+                                Icons.Default.CalendarToday,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(18.dp),
                             )
-                            Column {
-                                Text(
-                                    state.todayWorkout?.name ?: "Scheduled Workout",
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 13.sp
-                                )
-                                Text(
-                                    "Scheduled for today • See main workout action below",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
+                            Text("Today's Scheduled Workout", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         }
                         Surface(
                             shape = RoundedCornerShape(4.dp),
                             color = MaterialTheme.colorScheme.primaryContainer,
                         ) {
                             Text(
-                                "SCHEDULED",
+                                todayWorkout.splitType,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                                 fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            )
+                        }
+                    }
+                    Text(todayWorkout.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    if (todayWorkout.description.isNotBlank()) {
+                        Text(
+                            todayWorkout.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text(
+                        infoStr,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+
+                    Button(
+                        onClick = { onStartWorkout(todayWorkout.id) },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        shape = RoundedCornerShape(8.dp),
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("⚡ Start Today's Workout", fontWeight = FontWeight.Bold)
+                    }
+
+                    state.todayWarmUpRoutine?.let { routine ->
+                        OutlinedButton(
+                            onClick = { onStartWarmUp(routine) },
+                            modifier = Modifier.fillMaxWidth().height(42.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = Color(0xFFFF6F00),
+                            ),
+                            border = BorderStroke(1.dp, Color(0xFFFF6F00)),
+                        ) {
+                            Icon(Icons.Default.Whatshot, contentDescription = null, tint = Color(0xFFFF6F00))
+                            Spacer(Modifier.width(6.dp))
+                            Text("🔥 Warm-Up First (${routine.primaryMuscleGroup.label()} • ~${routine.estimatedDurationMinutes}m)", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+
+        // PRIORITY 3: Rest & Recovery Day State (Schedule configured but today is rest day)
+        hasSplitWorkouts -> {
+            val splitName = state.profile.preferredSplit.ifBlank { "Push Pull Legs (PPL)" }
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(
+                                Icons.Default.SelfImprovement,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.size(20.dp),
+                            )
+                            Text("Rest & Recovery Day", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                        ) {
+                            Text(
+                                "REST DAY",
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                fontWeight = FontWeight.Bold,
                                 fontSize = 10.sp,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            )
+                        }
+                    }
+                    Text(
+                        "Your $splitName schedule has today set as a recovery day. Focus on rest, hydration, and nutrition.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (nextScheduledWorkout != null) {
+                        val nextExCount = state.getExerciseCount(nextScheduledWorkout.id)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Next workout:", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "${state.nextScheduledDayName} • ${nextScheduledWorkout.name} ($nextExCount exercises)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    }
+                    Button(
+                        onClick = onOpenWorkouts,
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                    ) {
+                        Text("Browse Routines", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        // PRIORITY 4: New User State (No routines / splits setup yet)
+        else -> {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary),
+                modifier = modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Welcome to GymTracker", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Choose a workout routine or build a custom routine to start logging your progress.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(
+                        onClick = onOpenWorkouts,
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        shape = RoundedCornerShape(8.dp),
+                    ) {
+                        Text("Choose Workout", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Compact Weekly Consistency Row showing completed, scheduled, today, and rest states with semantics and text labels.
+ */
+@Composable
+fun WeeklyConsistencyRow(
+    weeklyPlan: List<DaySchedulePlan>,
+    preferredSplit: String,
+    onStartWorkout: (String) -> Unit,
+    onOpenWorkouts: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column {
+                Text("Weekly Schedule", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Routine: ${preferredSplit.ifBlank { "Push Pull Legs (PPL)" }}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            OutlinedButton(
+                onClick = onOpenWorkouts,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                modifier = Modifier.height(32.dp).defaultMinSize(minWidth = 48.dp),
+                shape = RoundedCornerShape(8.dp),
+            ) {
+                Text("Planner", fontSize = 11.sp)
+            }
+        }
+
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            items(weeklyPlan) { plan ->
+                val dayAbbrev = plan.day.name.take(3)
+                val isToday = plan.isToday
+                val isCompleted = plan.isCompleted
+                val workoutName = plan.workoutEntity?.name ?: plan.scheduledWorkout?.workoutName
+                val isRest = workoutName == null
+
+                val statusLabel = when {
+                    isCompleted -> "Completed"
+                    isToday -> "Today"
+                    !isRest -> "Scheduled"
+                    else -> "Rest"
+                }
+
+                val talkBackText = buildString {
+                    append("${plan.day.name}: ")
+                    if (isToday) append("Today. ")
+                    if (isCompleted) {
+                        append("Completed ${plan.completedWorkoutName ?: workoutName.orEmpty()}")
+                    } else if (!isRest) {
+                        append("Scheduled $workoutName")
+                    } else {
+                        append("Rest Day")
+                    }
+                }
+
+                OutlinedCard(
+                    onClick = {
+                        plan.workoutEntity?.let { onStartWorkout(it.id) } ?: onOpenWorkouts()
+                    },
+                    colors = CardDefaults.outlinedCardColors(
+                        containerColor = when {
+                            isCompleted -> Color(0xFFE8F5E9)
+                            isToday -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                            isRest -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                            else -> MaterialTheme.colorScheme.surface
+                        },
+                    ),
+                    border = BorderStroke(
+                        width = if (isToday) 2.dp else 1.dp,
+                        color = when {
+                            isCompleted -> Color(0xFF2E7D32)
+                            isToday -> MaterialTheme.colorScheme.primary
+                            else -> MaterialTheme.colorScheme.outlineVariant
+                        },
+                    ),
+                    modifier = Modifier
+                        .width(108.dp)
+                        .defaultMinSize(minHeight = 48.dp)
+                        .semantics {
+                            role = Role.Button
+                            contentDescription = talkBackText
+                        },
+                ) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Text(
+                                dayAbbrev,
+                                fontWeight = if (isToday || isCompleted) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                fontSize = 13.sp,
+                                color = when {
+                                    isCompleted -> Color(0xFF1B5E20)
+                                    isToday -> MaterialTheme.colorScheme.primary
+                                    else -> MaterialTheme.colorScheme.onSurface
+                                },
+                            )
+                            if (isCompleted) {
+                                Icon(
+                                    Icons.Default.CheckCircle,
+                                    contentDescription = "Completed",
+                                    tint = Color(0xFF2E7D32),
+                                    modifier = Modifier.size(14.dp),
+                                )
+                            } else if (isToday) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(6.dp),
+                                ) {}
+                            }
+                        }
+
+                        // Badge / Status text label
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = when {
+                                isCompleted -> Color(0xFFC8E6C9)
+                                isToday -> MaterialTheme.colorScheme.primary
+                                !isRest -> MaterialTheme.colorScheme.secondaryContainer
+                                else -> MaterialTheme.colorScheme.surfaceVariant
+                            },
+                        ) {
+                            Text(
+                                statusLabel,
+                                color = when {
+                                    isCompleted -> Color(0xFF1B5E20)
+                                    isToday -> Color.White
+                                    !isRest -> MaterialTheme.colorScheme.onSecondaryContainer
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                            )
+                        }
+
+                        if (!isRest && workoutName != null) {
+                            Text(
+                                workoutName.replace(" Day", ""),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                            )
+                        } else {
+                            Text(
+                                "Rest",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
                 }
             }
+        }
+    }
+}
 
-            // Weight Check-in reminder
+/**
+ * Combined Nutrition & Weight Log shortcuts with units and clear missing entry vs zero distinction.
+ */
+@Composable
+fun NutritionAndBodyLogShortcutsCard(
+    state: DashboardUiState,
+    onAddWater: (Int) -> Unit,
+    onOpenNutrition: (() -> Unit)?,
+    onLogWeight: (Double) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var showWeightInput by remember { mutableStateOf(false) }
+    var inputWeightStr by remember { mutableStateOf("") }
+
+    val unitSystem = state.profile.unitSystem
+    val weightUnitLabel = if (unitSystem == UnitSystem.METRIC) "kg" else "lb"
+    val multiplier = if (unitSystem == UnitSystem.METRIC) 1.0 else 2.20462
+
+    // Determine weight log status
+    val todayEpoch = LocalDate.now().toEpochDay()
+    val todayWeightLog = state.weights.firstOrNull { log ->
+        Instant.ofEpochMilli(log.loggedAt)
+            .atZone(ZoneId.systemDefault())
+            .toLocalDate()
+            .toEpochDay() == todayEpoch
+    }
+    val latestWeightLog = state.weights.maxByOrNull { it.loggedAt }
+
+    val weightDisplayStr = when {
+        todayWeightLog != null -> String.format(Locale.US, "%.1f %s", todayWeightLog.weightKg * multiplier, weightUnitLabel)
+        latestWeightLog != null -> String.format(Locale.US, "Last: %.1f %s (No log today)", latestWeightLog.weightKg * multiplier, weightUnitLabel)
+        else -> "No entry today"
+    }
+
+    // Determine water log status
+    val currentWater = state.todayWater?.milliliters
+    val waterGoal = state.profile.waterGoalMl.coerceAtLeast(1000)
+    val waterDisplayStr = if (currentWater != null) "$currentWater / $waterGoal ml" else "No entry today"
+    val waterProgress = if (currentWater != null) (currentWater.toFloat() / waterGoal.toFloat()).coerceIn(0f, 1f) else 0f
+
+    // Determine nutrition log status
+    val todayNut = state.todayNutrition
+    val caloriesDisplayStr = if (todayNut != null) "${todayNut.calories} / ${todayNut.calorieGoal} kcal" else "No entry today"
+
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                "Daily Check-in & Shortcuts",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+            )
+
+            // Nutrition & Water Shortcut Box
             Surface(
                 shape = RoundedCornerShape(10.dp),
                 color = MaterialTheme.colorScheme.surface,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics {
+                        role = Role.Button
+                        contentDescription = "Water and Nutrition Summary. Water: $waterDisplayStr. Calories: $caloriesDisplayStr."
+                    },
             ) {
                 Column(
                     modifier = Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(
+                                Icons.Default.WaterDrop,
+                                contentDescription = null,
+                                tint = Color(0xFF29B6F6),
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Text(
+                                "Hydration & Nutrition",
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp,
+                                modifier = if (onOpenNutrition != null) Modifier.clickable { onOpenNutrition() } else Modifier,
+                            )
+                        }
+                        Text(
+                            waterDisplayStr,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (currentWater != null && currentWater >= waterGoal) Color(0xFF2E7D32) else MaterialTheme.colorScheme.primary,
+                        )
+                    }
+
+                    if (currentWater != null) {
+                        LinearProgressIndicator(
+                            progress = { waterProgress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "Calories: $caloriesDisplayStr",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        if (onOpenNutrition != null) {
+                            TextButton(
+                                onClick = onOpenNutrition,
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 32.dp),
+                            ) {
+                                Text("Open Log", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedButton(
+                            onClick = { onAddWater(250) },
+                            modifier = Modifier.weight(1f).height(32.dp).defaultMinSize(minWidth = 48.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            shape = RoundedCornerShape(6.dp),
+                        ) {
+                            Text("+250 ml", fontSize = 11.sp)
+                        }
+                        OutlinedButton(
+                            onClick = { onAddWater(500) },
+                            modifier = Modifier.weight(1f).height(32.dp).defaultMinSize(minWidth = 48.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            shape = RoundedCornerShape(6.dp),
+                        ) {
+                            Text("+500 ml", fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+
+            // Body Weight Shortcut Box
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics {
+                        role = Role.Button
+                        contentDescription = "Weight check-in. Current status: $weightDisplayStr."
+                    },
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
                         ) {
                             Icon(
                                 Icons.Default.MonitorWeight,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.tertiary,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(18.dp),
                             )
                             Column {
                                 Text("Weight Check-in", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                                val textDesc = if (latestLog != null) {
-                                    String.format(java.util.Locale.getDefault(), "Last: %.1f %s", currentDisplayW, unitLabel)
-                                } else {
-                                    "No weigh-in yet"
-                                }
-                                Text(textDesc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(weightDisplayStr, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                         OutlinedButton(
                             onClick = {
                                 if (inputWeightStr.isBlank()) {
-                                    inputWeightStr = String.format(java.util.Locale.US, "%.1f", currentDisplayW)
+                                    val currentW = (latestWeightLog?.weightKg ?: state.profile.weightKg) * multiplier
+                                    inputWeightStr = String.format(Locale.US, "%.1f", currentW)
                                 }
                                 showWeightInput = !showWeightInput
                             },
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                             shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.height(32.dp)
+                            modifier = Modifier.height(32.dp).defaultMinSize(minWidth = 48.dp),
                         ) {
                             Text(if (showWeightInput) "Cancel" else "Log Weight", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                         }
@@ -1242,23 +1408,21 @@ fun InAppDailyRemindersCard(
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            androidx.compose.material3.OutlinedTextField(
+                            OutlinedTextField(
                                 value = inputWeightStr,
                                 onValueChange = { inputWeightStr = it },
-                                label = { Text("Weight ($unitLabel)") },
-                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
-                                ),
+                                label = { Text("Weight ($weightUnitLabel)") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 singleLine = true,
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.weight(1f),
                             )
                             Button(
                                 onClick = {
                                     val entered = inputWeightStr.replace(',', '.').toDoubleOrNull()
                                     if (entered != null && entered > 0.0) {
-                                        val weightInKg = if (unitSystem == com.gymtracker.app.data.local.entity.UnitSystem.METRIC) {
+                                        val weightInKg = if (unitSystem == UnitSystem.METRIC) {
                                             entered
                                         } else {
                                             entered / 2.20462
@@ -1267,7 +1431,8 @@ fun InAppDailyRemindersCard(
                                         showWeightInput = false
                                     }
                                 },
-                                shape = RoundedCornerShape(8.dp)
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
                             ) {
                                 Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(4.dp))

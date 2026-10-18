@@ -308,6 +308,111 @@ class GeminiCoachViewModelTest {
     }
 
     @Test
+    fun `cancelWorkoutGeneration stops generation and sets cancelled status message`() = runTest(testDispatcher) {
+        val dummyRepo = Proxy.newProxyInstance(
+            GymRepository::class.java.classLoader,
+            arrayOf(GymRepository::class.java)
+        ) { _, method, _ ->
+            when (method.name) {
+                "observeHealthProfile" -> flowOf(UserHealthProfileEntity())
+                "getHealthProfile" -> UserHealthProfileEntity()
+                "observeUserProfile" -> flowOf(UserProfileEntity())
+                "observeGeminiSyncReports" -> flowOf(emptyList<Any>())
+                "observeGymEquipments" -> flowOf(emptyList<Any>())
+                else -> null
+            }
+        } as GymRepository
+
+        val dummyContext = object : android.content.ContextWrapper(null) {}
+
+        val delayingApiClient = object : GeminiApiClient() {
+            override suspend fun generateCustomWorkout(
+                machineBitmap: android.graphics.Bitmap?,
+                userNotes: String,
+                healthProfile: UserHealthProfileEntity,
+                userProfile: UserProfileEntity?,
+            ): GeminiWorkoutBuilderResult {
+                kotlinx.coroutines.delay(10_000)
+                return GeminiWorkoutBuilderResult()
+            }
+        }
+
+        val viewModel = GeminiCoachViewModel(dummyRepo, delayingApiClient, dummyContext)
+        val collectJob = launch(testDispatcher) { viewModel.uiState.collect { } }
+        runCurrent()
+
+        viewModel.generateCustomWorkout()
+        runCurrent()
+        assertTrue(viewModel.uiState.value.isBuildingWorkout)
+
+        viewModel.cancelWorkoutGeneration()
+        runCurrent()
+
+        val state = viewModel.uiState.value
+        assertFalse(state.isBuildingWorkout)
+        assertEquals("Workout generation cancelled.", state.statusMessage)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `cancelProgressSync stops progress sync and sets cancelled status message`() = runTest(testDispatcher) {
+        val mockHealthProfile = UserHealthProfileEntity(id = "me")
+        val dummyRepo = Proxy.newProxyInstance(
+            GymRepository::class.java.classLoader,
+            arrayOf(GymRepository::class.java),
+        ) { _, method, _ ->
+            when (method.name) {
+                "observeHealthProfile" -> flowOf(mockHealthProfile)
+                "getHealthProfile" -> mockHealthProfile
+                "observeUserProfile" -> flowOf(null)
+                "observeGeminiSyncReports" -> flowOf(emptyList<GeminiSyncReportEntity>())
+                "observeGymEquipments" -> flowOf(emptyList<Any>())
+                "observeHistory" -> flowOf(emptyList<Any>())
+                "observePersonalRecords" -> flowOf(emptyList<Any>())
+                "observeWeightLogs" -> flowOf(emptyList<Any>())
+                "observeNutritionLog" -> flowOf(null)
+                "observeWater" -> flowOf(null)
+                else -> null
+            }
+        } as GymRepository
+
+        val delayingApiClient = object : GeminiApiClient() {
+            override suspend fun syncDailyProgress(
+                userProfile: UserProfileEntity?,
+                healthProfile: UserHealthProfileEntity,
+                recentSessions: List<com.gymtracker.app.data.local.entity.WorkoutSessionEntity>,
+                recentSets: List<com.gymtracker.app.data.local.entity.PerformedSetEntity>,
+                recentRecords: List<com.gymtracker.app.data.local.entity.PersonalRecordEntity>,
+                recentWeights: List<com.gymtracker.app.data.local.entity.WeightLogEntity>,
+                todayNutrition: NutritionLogEntity?,
+                todayWater: WaterLogEntity?,
+            ): GeminiProgressSyncResult {
+                kotlinx.coroutines.delay(10_000)
+                return GeminiProgressSyncResult()
+            }
+        }
+        val dummyContext = object : android.content.ContextWrapper(null) {}
+
+        val viewModel = GeminiCoachViewModel(dummyRepo, delayingApiClient, dummyContext)
+        val collectJob = launch(testDispatcher) { viewModel.uiState.collect { } }
+        runCurrent()
+
+        viewModel.syncDailyProgressWithGemini()
+        runCurrent()
+        assertTrue(viewModel.uiState.value.isSyncing)
+
+        viewModel.cancelProgressSync()
+        runCurrent()
+
+        val state = viewModel.uiState.value
+        assertFalse(state.isSyncing)
+        assertEquals("Progress sync cancelled.", state.statusMessage)
+
+        collectJob.cancel()
+    }
+
+    @Test
     fun `syncDailyProgressWithGemini error sets errorMessage and clears syncing state`() = runTest(testDispatcher) {
         val mockHealthProfile = UserHealthProfileEntity(id = "me")
 

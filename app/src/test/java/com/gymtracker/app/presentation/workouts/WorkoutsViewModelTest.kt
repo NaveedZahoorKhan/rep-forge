@@ -5,6 +5,7 @@ import com.gymtracker.app.data.local.entity.Equipment
 import com.gymtracker.app.data.local.entity.ExerciseEntity
 import com.gymtracker.app.data.local.entity.MuscleGroup
 import com.gymtracker.app.data.local.entity.UserProfileEntity
+import com.gymtracker.app.data.local.entity.WeekDay
 import com.gymtracker.app.data.local.entity.WeeklyScheduleEntity
 import com.gymtracker.app.data.local.entity.WorkoutEntity
 import com.gymtracker.app.domain.model.WorkoutDraft
@@ -24,6 +25,8 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -188,25 +191,206 @@ class WorkoutsViewModelTest {
             }
         }
 
-        // Invalid: empty name
         assertEquals("Workout name cannot be empty", validate("", 3, 8, 12, 50.0, 1))
-
-        // Invalid: sets <= 0
         assertEquals("Sets must be at least 1", validate("Test", 0, 8, 12, 50.0, 1))
-
-        // Invalid: min reps <= 0
         assertEquals("Min reps must be at least 1", validate("Test", 3, 0, 12, 50.0, 1))
-
-        // Invalid: repsMax < repsMin
         assertEquals("Max reps (6) cannot be less than min reps (10)", validate("Test", 3, 10, 6, 50.0, 1))
-
-        // Invalid: negative weight
         assertEquals("Starting weight cannot be negative", validate("Test", 3, 8, 12, -5.0, 1))
-
-        // Invalid: no exercises selected
         assertEquals("Select at least 1 exercise", validate("Test", 3, 8, 12, 50.0, 0))
-
-        // Valid
         assertEquals(null, validate("Valid Push Day", 4, 8, 12, 60.0, 2))
+    }
+
+    @Test
+    fun `EditableExerciseItem validation identifies invalid set, rep, weight and rest fields`() {
+        val validItem = EditableExerciseItem(
+            exerciseId = "e1",
+            exerciseName = "Bench Press",
+            primaryMuscle = "Chest",
+            equipment = "Barbell",
+            setCountText = "3",
+            repsMinText = "8",
+            repsMaxText = "12",
+            weightText = "60.0",
+            restSecondsText = "90"
+        )
+        assertNull(validItem.validationError)
+
+        val invalidSets = validItem.copy(setCountText = "0")
+        assertNotNull(invalidSets.validationError)
+        assertTrue(invalidSets.validationError!!.contains("Sets must be at least 1"))
+
+        val invalidRepsOrder = validItem.copy(repsMinText = "12", repsMaxText = "8")
+        assertNotNull(invalidRepsOrder.validationError)
+        assertTrue(invalidRepsOrder.validationError!!.contains("Max reps cannot be less than min reps"))
+
+        val negativeWeight = validItem.copy(weightText = "-10.0")
+        assertNotNull(negativeWeight.validationError)
+        assertTrue(negativeWeight.validationError!!.contains("Weight cannot be negative"))
+
+        val invalidRest = validItem.copy(restSecondsText = "-5")
+        assertNotNull(invalidRest.validationError)
+        assertTrue(invalidRest.validationError!!.contains("Rest seconds cannot be negative"))
+    }
+
+    @Test
+    fun `exercise list reordering moves items up and down correctly`() {
+        val list = mutableListOf(
+            EditableExerciseItem(exerciseId = "e1", exerciseName = "Bench Press", primaryMuscle = "Chest", equipment = "Barbell"),
+            EditableExerciseItem(exerciseId = "e2", exerciseName = "Incline Dumbbell Press", primaryMuscle = "Chest", equipment = "Dumbbell"),
+            EditableExerciseItem(exerciseId = "e3", exerciseName = "Barbell Row", primaryMuscle = "Back", equipment = "Barbell")
+        )
+
+        // Move item at index 1 ("Incline Dumbbell Press") UP to index 0
+        fun moveUp(index: Int) {
+            if (index > 0) {
+                val elem = list.removeAt(index)
+                list.add(index - 1, elem)
+            }
+        }
+
+        moveUp(1)
+        assertEquals("Incline Dumbbell Press", list[0].exerciseName)
+        assertEquals("Bench Press", list[1].exerciseName)
+
+        // Move item at index 0 DOWN to index 1
+        fun moveDown(index: Int) {
+            if (index < list.lastIndex) {
+                val elem = list.removeAt(index)
+                list.add(index + 1, elem)
+            }
+        }
+
+        moveDown(0)
+        assertEquals("Bench Press", list[0].exerciseName)
+        assertEquals("Incline Dumbbell Press", list[1].exerciseName)
+    }
+
+    @Test
+    fun `exercise removal and undo restores item to original index`() {
+        val list = mutableListOf(
+            EditableExerciseItem(exerciseId = "e1", exerciseName = "Bench Press", primaryMuscle = "Chest", equipment = "Barbell"),
+            EditableExerciseItem(exerciseId = "e2", exerciseName = "Incline Dumbbell Press", primaryMuscle = "Chest", equipment = "Dumbbell"),
+            EditableExerciseItem(exerciseId = "e3", exerciseName = "Barbell Row", primaryMuscle = "Back", equipment = "Barbell")
+        )
+
+        // Remove item at index 1
+        val removeIndex = 1
+        val removedItem = list.removeAt(removeIndex)
+        assertEquals(2, list.size)
+        assertEquals("Barbell Row", list[1].exerciseName)
+
+        // Undo removal: re-insert at removeIndex
+        list.add(removeIndex, removedItem)
+        assertEquals(3, list.size)
+        assertEquals("Incline Dumbbell Press", list[1].exerciseName)
+    }
+
+    @Test
+    fun `exercise picker retains selected items and prevents duplicate additions`() {
+        val existingSelected = setOf("e1")
+        val pickerSelections = mutableSetOf<String>().apply { addAll(existingSelected) }
+
+        // User searches for exercises, filter query changes to "row"
+        val searchQuery = "row"
+        assertTrue(searchQuery.isNotBlank())
+
+        // Selection remains retained despite search query change
+        assertTrue(pickerSelections.contains("e1"))
+
+        // User selects "e2"
+        pickerSelections.add("e2")
+        assertEquals(2, pickerSelections.size)
+
+        // Confirm selection: filter out items already in routine
+        val existingIdsInRoutine = setOf("e1")
+        val newlySelected = pickerSelections.filterNot { it in existingIdsInRoutine }
+
+        assertEquals(1, newlySelected.size)
+        assertEquals("e2", newlySelected.first())
+    }
+
+    @Test
+    fun `assignWorkoutToDay deletes existing schedule for day and upserts new schedule entity`() = runTest(testDispatcher) {
+        var deletedDay: WeekDay? = null
+        var upsertedSchedule: WeeklyScheduleEntity? = null
+
+        val repo = createMockInterface<GymRepository> { methodName, args ->
+            when (methodName) {
+                "deleteScheduleForDay" -> {
+                    deletedDay = args?.get(0) as? WeekDay
+                    Unit
+                }
+                "upsertSchedule" -> {
+                    upsertedSchedule = args?.get(0) as? WeeklyScheduleEntity
+                    Unit
+                }
+                else -> null
+            }
+        }
+        val soundPlayer = createMockInterface<WorkoutSoundPlayer>()
+        val viewModel = WorkoutsViewModel(repo, soundPlayer)
+
+        viewModel.assignWorkoutToDay(WeekDay.MONDAY, "w1", "Push Day A")
+        runCurrent()
+
+        assertEquals(WeekDay.MONDAY, deletedDay)
+        assertEquals(WeekDay.MONDAY, upsertedSchedule?.weekDay)
+        assertEquals("w1", upsertedSchedule?.workoutId)
+        assertEquals("Push Day A", upsertedSchedule?.workoutName)
+    }
+
+    @Test
+    fun `removeSchedule calls repository deleteSchedule with correct ID`() = runTest(testDispatcher) {
+        var deletedScheduleId: String? = null
+
+        val repo = createMockInterface<GymRepository> { methodName, args ->
+            if (methodName == "deleteSchedule") {
+                deletedScheduleId = args?.get(0) as? String
+                Unit
+            } else null
+        }
+        val soundPlayer = createMockInterface<WorkoutSoundPlayer>()
+        val viewModel = WorkoutsViewModel(repo, soundPlayer)
+
+        viewModel.removeSchedule("sched-999")
+        runCurrent()
+
+        assertEquals("sched-999", deletedScheduleId)
+    }
+
+    @Test
+    fun `rescheduleWorkout deletes old schedule and target day schedule before upserting new schedule`() = runTest(testDispatcher) {
+        var deletedScheduleId: String? = null
+        var deletedTargetDay: WeekDay? = null
+        var upsertedSchedule: WeeklyScheduleEntity? = null
+
+        val repo = createMockInterface<GymRepository> { methodName, args ->
+            when (methodName) {
+                "deleteSchedule" -> {
+                    deletedScheduleId = args?.get(0) as? String
+                    Unit
+                }
+                "deleteScheduleForDay" -> {
+                    deletedTargetDay = args?.get(0) as? WeekDay
+                    Unit
+                }
+                "upsertSchedule" -> {
+                    upsertedSchedule = args?.get(0) as? WeeklyScheduleEntity
+                    Unit
+                }
+                else -> null
+            }
+        }
+        val soundPlayer = createMockInterface<WorkoutSoundPlayer>()
+        val viewModel = WorkoutsViewModel(repo, soundPlayer)
+
+        viewModel.rescheduleWorkout("sched-100", WeekDay.MONDAY, WeekDay.FRIDAY, "w3", "Leg Day A")
+        runCurrent()
+
+        assertEquals("sched-100", deletedScheduleId)
+        assertEquals(WeekDay.FRIDAY, deletedTargetDay)
+        assertEquals(WeekDay.FRIDAY, upsertedSchedule?.weekDay)
+        assertEquals("w3", upsertedSchedule?.workoutId)
+        assertEquals("Leg Day A", upsertedSchedule?.workoutName)
     }
 }

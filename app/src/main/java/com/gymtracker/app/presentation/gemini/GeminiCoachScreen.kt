@@ -11,6 +11,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -42,12 +43,15 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Sync
@@ -207,6 +211,7 @@ fun GeminiCoachScreen(
                     onSetCapturedBitmap = viewModel::setCapturedBitmap,
                     onRemovePhoto = viewModel::removePhoto,
                     onGenerate = viewModel::generateCustomWorkout,
+                    onCancelGenerate = viewModel::cancelWorkoutGeneration,
                     onSelectOption = viewModel::selectOption,
                     onSaveOption = { option ->
                         viewModel.saveWorkoutOption(option) {
@@ -222,6 +227,7 @@ fun GeminiCoachScreen(
                 1 -> ProgressSyncTab(
                     state = state,
                     onSyncNow = viewModel::syncDailyProgressWithGemini,
+                    onCancelSync = viewModel::cancelProgressSync,
                 )
             }
         }
@@ -237,10 +243,13 @@ private fun WorkoutBuilderTab(
     onSetCapturedBitmap: (Bitmap?) -> Unit,
     onRemovePhoto: () -> Unit,
     onGenerate: () -> Unit,
+    onCancelGenerate: () -> Unit,
     onSelectOption: (Int) -> Unit,
     onSaveOption: (GeminiWorkoutOption) -> Unit,
     onStartOption: (GeminiWorkoutOption) -> Unit,
 ) {
+    var showAdvancedInputs by remember { mutableStateOf(true) }
+
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
         onResult = { uri -> onSetPhotoUri(uri) },
@@ -298,59 +307,149 @@ private fun WorkoutBuilderTab(
             }
         }
 
-        // Section 1: Athlete Health Background & Preferences
+        // Section 1: Compact Goal & Active Input Summary Card
         item {
-            HealthBackgroundCard(
-                healthProfile = state.healthProfile,
-                onSaveProfile = onUpdateHealthProfile,
+            CompactInputSummaryCard(
+                state = state,
+                isExpanded = showAdvancedInputs,
+                onToggleExpand = { showAdvancedInputs = !showAdvancedInputs },
             )
         }
 
-        // Section 2: Machine Photo Upload & Equipment Info
-        item {
-            MachinePhotoUploadCard(
-                bitmap = state.machineBitmap,
-                onPickPhoto = {
-                    photoPickerLauncher.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                    )
-                },
-                onCapturePhoto = { cameraLauncher.launch(null) },
-                onRemovePhoto = onRemovePhoto,
-            )
+        // Expandable Detailed Inputs Section
+        if (showAdvancedInputs) {
+            item {
+                HealthBackgroundCard(
+                    healthProfile = state.healthProfile,
+                    onSaveProfile = onUpdateHealthProfile,
+                )
+            }
+
+            item {
+                MachinePhotoUploadCard(
+                    bitmap = state.machineBitmap,
+                    onPickPhoto = {
+                        photoPickerLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    },
+                    onCapturePhoto = { cameraLauncher.launch(null) },
+                    onRemovePhoto = onRemovePhoto,
+                )
+            }
+
+            item {
+                PersonalNotesCard(
+                    userNotes = state.userNotes,
+                    onUpdateNotes = onUpdateNotes,
+                )
+            }
+
+            item {
+                PrivacyDisclosureCard()
+            }
         }
 
-        // Section 3: Personal Notes & Custom Requests
+        // Action Button: Generate / Progress State with Cancellation
         item {
-            PersonalNotesCard(
-                userNotes = state.userNotes,
-                onUpdateNotes = onUpdateNotes,
-            )
-        }
-
-        // Action Button: Generate
-        item {
-            Button(
-                onClick = onGenerate,
-                enabled = !state.isBuildingWorkout,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(54.dp)
-                    .testTag("generate_gemini_workout_button"),
-                shape = RoundedCornerShape(12.dp),
-            ) {
-                if (state.isBuildingWorkout) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        strokeWidth = 2.5.dp,
-                    )
-                    Spacer(Modifier.width(12.dp))
-                    Text("Gemini is designing custom workouts...")
-                } else {
+            if (state.isBuildingWorkout) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().testTag("workout_building_progress_card"),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                color = MaterialTheme.colorScheme.primary,
+                                strokeWidth = 2.5.dp,
+                            )
+                            Text(
+                                "Gemini is designing custom workouts...",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = onCancelGenerate,
+                            modifier = Modifier.testTag("cancel_workout_generation_button"),
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Cancel Generation")
+                        }
+                    }
+                }
+            } else {
+                Button(
+                    onClick = onGenerate,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(54.dp)
+                        .testTag("generate_gemini_workout_button"),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
                     Icon(Icons.Default.AutoAwesome, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text("Generate Tailored Workouts with Gemini", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        // Generation Error Card with Retry Action
+        if (state.errorMessage != null && state.builderResult == null && !state.isBuildingWorkout) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth().testTag("builder_error_card"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.Info,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            Text(
+                                "Workout Generation Failed",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                        }
+                        Text(
+                            state.errorMessage ?: "An unexpected error occurred while building the workout.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        OutlinedButton(
+                            onClick = onGenerate,
+                            modifier = Modifier.align(Alignment.End).testTag("retry_generation_button"),
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Retry Generation")
+                        }
+                    }
                 }
             }
         }
@@ -648,6 +747,142 @@ private fun HealthBackgroundCard(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CompactInputSummaryCard(
+    state: GeminiCoachUiState,
+    isExpanded: Boolean,
+    onToggleExpand: () -> Unit,
+) {
+    val hp = state.healthProfile
+    val hasPhoto = state.machineBitmap != null
+    val hasNotes = state.userNotes.isNotBlank()
+    val healthSummary = listOf(hp.healthConditions, hp.injuriesAndLimitations).filter { it.isNotBlank() }.joinToString(", ")
+
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("compact_input_summary_card"),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        Icons.Default.FitnessCenter,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        "Goal & Input Summary",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+
+                OutlinedButton(
+                    onClick = onToggleExpand,
+                    modifier = Modifier.testTag("toggle_advanced_inputs_button"),
+                ) {
+                    Icon(
+                        if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.Edit,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (isExpanded) "Hide Options" else "Edit Inputs")
+                }
+            }
+
+            HorizontalDivider()
+
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                AssistChip(
+                    onClick = onToggleExpand,
+                    label = { Text("Goal: ${hp.primaryGoal}") },
+                    leadingIcon = { Icon(Icons.Default.Favorite, contentDescription = null, Modifier.size(16.dp)) },
+                )
+                AssistChip(
+                    onClick = onToggleExpand,
+                    label = { Text("Level: ${hp.experienceLevel}") },
+                )
+                AssistChip(
+                    onClick = onToggleExpand,
+                    label = { Text("Duration: ${hp.preferredDurationMinutes}m") },
+                )
+                if (hasPhoto) {
+                    AssistChip(
+                        onClick = onToggleExpand,
+                        label = { Text("📷 Photo Attached") },
+                    )
+                }
+                if (hasNotes) {
+                    AssistChip(
+                        onClick = onToggleExpand,
+                        label = { Text("📝 Custom Notes") },
+                    )
+                }
+                if (healthSummary.isNotBlank()) {
+                    AssistChip(
+                        onClick = onToggleExpand,
+                        label = { Text("⚠️ $healthSummary", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PrivacyDisclosureCard() {
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("privacy_disclosure_card"),
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        ),
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Icon(
+                Icons.Default.Lock,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp).padding(top = 2.dp),
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    "🔒 Privacy Disclosure",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "Fitness goals, health precautions, personal notes, and equipment photos are sent securely to Gemini AI to generate customized workout recommendations. No personally identifiable data (e.g., name, email) is transmitted.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun MachinePhotoUploadCard(
     bitmap: Bitmap?,
@@ -673,28 +908,45 @@ private fun MachinePhotoUploadCard(
             )
 
             if (bitmap != null) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(200.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp)),
-                ) {
-                    Image(
-                        bitmap = bitmap.asImageBitmap(),
-                        contentDescription = "Workout machine photo",
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop,
-                    )
-                    IconButton(
-                        onClick = onRemovePhoto,
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(
                         modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(8.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)),
+                            .fillMaxWidth()
+                            .height(200.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp)),
                     ) {
-                        Icon(Icons.Default.Close, contentDescription = "Remove photo")
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = "Workout machine photo preview",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop,
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        OutlinedButton(
+                            onClick = onPickPhoto,
+                            modifier = Modifier.weight(1f).height(48.dp).testTag("replace_machine_photo_button"),
+                        ) {
+                            Icon(Icons.Default.PhotoLibrary, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Change Photo")
+                        }
+                        OutlinedButton(
+                            onClick = onRemovePhoto,
+                            modifier = Modifier.weight(1f).height(48.dp).testTag("remove_machine_photo_button"),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error,
+                            ),
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Remove")
+                        }
                     }
                 }
             } else {
@@ -704,7 +956,7 @@ private fun MachinePhotoUploadCard(
                 ) {
                     OutlinedButton(
                         onClick = onPickPhoto,
-                        modifier = Modifier.weight(1f).testTag("pick_machine_photo_button"),
+                        modifier = Modifier.weight(1f).height(48.dp).testTag("pick_machine_photo_button"),
                     ) {
                         Icon(Icons.Default.PhotoLibrary, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
@@ -712,7 +964,7 @@ private fun MachinePhotoUploadCard(
                     }
                     OutlinedButton(
                         onClick = onCapturePhoto,
-                        modifier = Modifier.weight(1f).testTag("take_machine_photo_button"),
+                        modifier = Modifier.weight(1f).height(48.dp).testTag("take_machine_photo_button"),
                     ) {
                         Icon(Icons.Default.AddAPhoto, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
@@ -936,10 +1188,13 @@ private fun WorkoutOptionDetailCard(
     onSave: () -> Unit,
     onStart: () -> Unit,
 ) {
+    var isRationaleExpanded by remember { mutableStateOf(false) }
+
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().testTag("workout_option_detail_card"),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(
@@ -948,9 +1203,13 @@ private fun WorkoutOptionDetailCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text(option.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Text(
-                        "${option.splitType} • ${option.estimatedMinutes} minutes",
+                        option.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        "${option.splitType} • ${option.estimatedMinutes} min estimated duration",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Medium,
@@ -959,33 +1218,77 @@ private fun WorkoutOptionDetailCard(
             }
 
             if (option.healthFocusNote.isNotBlank()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f))
-                        .padding(10.dp),
+                Card(
+                    modifier = Modifier.fillMaxWidth().clickable { isRationaleExpanded = !isRationaleExpanded },
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f),
+                    ),
                 ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
-                        Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(18.dp))
-                        Text(
-                            "Why this fits your health background: ${option.healthFocusNote}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onTertiaryContainer,
-                        )
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f, fill = false),
+                            ) {
+                                Icon(
+                                    Icons.Default.Info,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.tertiary,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Text(
+                                    "AI Coaching Rationale & Health Fit",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                )
+                            }
+                            Icon(
+                                if (isRationaleExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                contentDescription = "Toggle rationale details",
+                                tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                            )
+                        }
+
+                        AnimatedVisibility(visible = isRationaleExpanded || option.healthFocusNote.length < 80) {
+                            Text(
+                                option.healthFocusNote,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            )
+                        }
                     }
                 }
             }
 
             HorizontalDivider()
 
-            Text("Exercises (${option.exercises.size}):", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Planned Exercises (${option.exercises.size}):",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+            )
 
             option.exercises.forEachIndexed { idx, ex ->
                 ExerciseItemRow(index = idx + 1, item = ex)
             }
 
             HorizontalDivider()
+
+            if (isStale) {
+                Text(
+                    "⚠️ Inputs have been edited since generating this plan. Regenerate to start or save an updated plan.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
 
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
@@ -995,16 +1298,16 @@ private fun WorkoutOptionDetailCard(
                 OutlinedButton(
                     onClick = onSave,
                     enabled = !isStale,
-                    modifier = Modifier.weight(1f).testTag("save_gemini_workout_button"),
+                    modifier = Modifier.weight(1f).height(48.dp).testTag("save_gemini_workout_button"),
                 ) {
                     Icon(Icons.Default.Save, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
-                    Text("Save Workout", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Save Plan", maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Button(
                     onClick = onStart,
                     enabled = !isStale,
-                    modifier = Modifier.weight(1f).testTag("start_gemini_workout_button"),
+                    modifier = Modifier.weight(1f).height(48.dp).testTag("start_gemini_workout_button"),
                 ) {
                     Icon(Icons.Default.PlayArrow, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
@@ -1098,9 +1401,47 @@ private fun ExerciseItemRow(
 }
 
 @Composable
+private fun MedicalDisclaimerCard() {
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("medical_disclaimer_card"),
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f),
+        ),
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Icon(
+                Icons.Default.Security,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.tertiary,
+                modifier = Modifier.size(20.dp).padding(top = 2.dp),
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    "⚠️ Medical Disclaimer",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                )
+                Text(
+                    "AI-generated reports provide coaching feedback and workout analytics based on your logs. They do not constitute medical advice, diagnosis, or treatment. Always consult a qualified healthcare provider regarding any health conditions or physical limitations.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun ProgressSyncTab(
     state: GeminiCoachUiState,
     onSyncNow: () -> Unit,
+    onCancelSync: () -> Unit = {},
 ) {
     val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy • h:mm a", Locale.getDefault()) }
 
@@ -1111,6 +1452,11 @@ private fun ProgressSyncTab(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item { Spacer(Modifier.height(4.dp)) }
+
+        // Medical Disclaimer
+        item {
+            MedicalDisclaimerCard()
+        }
 
         // Sync Action Card
         item {
@@ -1141,24 +1487,45 @@ private fun ProgressSyncTab(
                         }
                     }
 
-                    Button(
-                        onClick = onSyncNow,
-                        enabled = !state.isSyncing,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(50.dp)
-                            .testTag("sync_progress_with_gemini_button"),
-                        shape = RoundedCornerShape(10.dp),
-                    ) {
-                        if (state.isSyncing) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                strokeWidth = 2.dp,
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text("Syncing progress with Gemini...")
-                        } else {
+                    if (state.isSyncing) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    strokeWidth = 2.dp,
+                                )
+                                Text(
+                                    "Syncing progress with Gemini...",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = onCancelSync,
+                                modifier = Modifier.testTag("cancel_sync_button"),
+                            ) {
+                                Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Cancel Sync")
+                            }
+                        }
+                    } else {
+                        Button(
+                            onClick = onSyncNow,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp)
+                                .testTag("sync_progress_with_gemini_button"),
+                            shape = RoundedCornerShape(10.dp),
+                        ) {
                             Icon(Icons.Default.AutoAwesome, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
                             Text("Sync Daily Progress to Gemini", fontWeight = FontWeight.Bold)
@@ -1310,10 +1677,13 @@ private fun ProgressSyncTab(
 
 @Composable
 private fun GeminiSyncReportCard(report: GeminiProgressSyncResult) {
+    val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy • h:mm a", Locale.getDefault()) }
+
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().testTag("gemini_sync_report_card"),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(
@@ -1321,46 +1691,39 @@ private fun GeminiSyncReportCard(report: GeminiProgressSyncResult) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Icon(
-                        Icons.Default.CheckCircle,
-                        contentDescription = null,
-                        tint = if (report.isLocalFallback) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = if (report.isLocalFallback) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Text("AI Coach Report", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    }
+                    Text(
+                        "${dateFormat.format(Date(report.syncTimestamp))} • Covered Period: Past 7 days & Today",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Text("Synced Successfully", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    // Source badge
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(
-                                if (report.isLocalFallback) MaterialTheme.colorScheme.tertiaryContainer
-                                else MaterialTheme.colorScheme.primaryContainer
-                            )
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                    ) {
-                        Text(
-                            text = if (report.isLocalFallback) "Local Calculation" else "Gemini Coach",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (report.isLocalFallback) MaterialTheme.colorScheme.onTertiaryContainer
-                            else MaterialTheme.colorScheme.onPrimaryContainer,
-                            fontWeight = FontWeight.Bold,
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (report.isLocalFallback) MaterialTheme.colorScheme.tertiaryContainer
+                            else MaterialTheme.colorScheme.primaryContainer
                         )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.secondaryContainer)
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                    ) {
-                        Text(
-                            report.consistencyScore,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                ) {
+                    Text(
+                        text = if (report.isLocalFallback) "Source: Local Heuristics" else "Source: Gemini 2.5 Flash",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (report.isLocalFallback) MaterialTheme.colorScheme.onTertiaryContainer
+                        else MaterialTheme.colorScheme.onPrimaryContainer,
+                        fontWeight = FontWeight.Bold,
+                    )
                 }
             }
 
@@ -1458,9 +1821,10 @@ private fun PastReportCard(
     }
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().testTag("past_report_card_${entity.id}"),
         shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
@@ -1472,12 +1836,12 @@ private fun PastReportCard(
             ) {
                 Column {
                     Text(
-                        dateFormat.format(Date(entity.syncedAt)),
+                        "${dateFormat.format(Date(entity.syncedAt))} • Covered Period: Past 7 days",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        entity.consistencyScore,
+                        entity.consistencyScore.ifBlank { "AI Coach Progress Report" },
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -1493,7 +1857,7 @@ private fun PastReportCard(
                             .padding(horizontal = 8.dp, vertical = 4.dp),
                     ) {
                         Text(
-                            text = if (entity.isLocalFallback) "Local Calculation" else "Gemini Coach",
+                            text = if (entity.isLocalFallback) "Source: Local Heuristics" else "Source: Gemini 2.5 Flash",
                             style = MaterialTheme.typography.labelSmall,
                             color = if (entity.isLocalFallback) MaterialTheme.colorScheme.onTertiaryContainer
                             else MaterialTheme.colorScheme.onPrimaryContainer,

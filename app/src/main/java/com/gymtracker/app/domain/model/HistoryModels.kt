@@ -10,6 +10,8 @@ data class SetDetailSummary(
     val reps: Int,
     val volumeKg: Double,
     val isPr: Boolean = false,
+    val targetReps: String? = null,
+    val targetWeightKg: Double? = null,
 )
 
 @Serializable
@@ -21,6 +23,7 @@ data class ExerciseVolumeSummary(
     val maxWeightKg: Double,
     val totalVolumeKg: Double,
     val setsDetail: List<SetDetailSummary> = emptyList(),
+    val targetSummary: String? = null,
 )
 
 @Serializable
@@ -46,6 +49,7 @@ data class ExerciseVolumePoint(
 )
 
 data class PastWorkoutLogDraft(
+    val id: String? = null,
     val workoutName: String,
     val dateEpochMilli: Long,
     val durationMinutes: Long,

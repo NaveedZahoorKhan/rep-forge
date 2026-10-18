@@ -38,6 +38,28 @@ class HealthSyncService @Inject constructor(
         const val HEALTH_CONNECT_PKG = "com.google.android.apps.healthdata"
     }
 
+    fun isHealthConnectAvailable(): Boolean {
+        val intent = Intent(HEALTH_CONNECT_ACTION)
+        val hasActivity = intent.resolveActivity(context.packageManager) != null
+        val hasPackage = try {
+            context.packageManager.getPackageInfo(HEALTH_CONNECT_PKG, 0)
+            true
+        } catch (e: Exception) {
+            false
+        }
+        return hasActivity || hasPackage
+    }
+
+    fun hasHealthConnectPermissions(): Boolean {
+        if (!isHealthConnectAvailable()) return false
+        val writeExercise = "android.permission.health.WRITE_EXERCISE"
+        val writeWeight = "android.permission.health.WRITE_WEIGHT"
+        val writeHydration = "android.permission.health.WRITE_HYDRATION"
+        return context.checkSelfPermission(writeExercise) == android.content.pm.PackageManager.PERMISSION_GRANTED ||
+               context.checkSelfPermission(writeWeight) == android.content.pm.PackageManager.PERMISSION_GRANTED ||
+               context.checkSelfPermission(writeHydration) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
     fun getHealthConnectSettingsIntent(): Intent {
         val intent = Intent(HEALTH_CONNECT_ACTION)
         return if (intent.resolveActivity(context.packageManager) != null) {
@@ -57,8 +79,34 @@ class HealthSyncService @Inject constructor(
         onProgressUpdate: (suspend (step: String, progress: Float) -> Unit)? = null,
     ): Result<HealthSyncSummary> = withContext(Dispatchers.IO) {
         runCatching {
-            onProgressUpdate?.invoke("Connecting to Google Health link...", 0.15f)
-            delay(200)
+            onProgressUpdate?.invoke("Checking Google Health Connect...", 0.15f)
+            delay(150)
+
+            if (!isHealthConnectAvailable()) {
+                gymDao.insertHealthSyncLog(
+                    HealthSyncLogEntity(
+                        category = "SYSTEM",
+                        summary = "Health Connect unavailable on device",
+                        itemCount = 0,
+                        status = "FAILED",
+                        details = "Google Health Connect package or provider not detected. All workout and body metrics remain safely stored locally.",
+                    )
+                )
+                throw IllegalStateException("Google Health Connect is not installed or available on this device. Data is securely tracked locally.")
+            }
+
+            if (!hasHealthConnectPermissions()) {
+                gymDao.insertHealthSyncLog(
+                    HealthSyncLogEntity(
+                        category = "SYSTEM",
+                        summary = "Health Connect permissions required",
+                        itemCount = 0,
+                        status = "FAILED",
+                        details = "Health Connect permissions have not been granted. Open Health Settings to allow access.",
+                    )
+                )
+                throw IllegalStateException("Health Connect permissions have not been granted. Please enable them in Health Settings.")
+            }
 
             val profile = gymDao.getUserProfile()
             val userWeightKg = profile?.weightKg ?: 75.0
@@ -69,25 +117,25 @@ class HealthSyncService @Inject constructor(
 
             if (syncWorkouts) {
                 onProgressUpdate?.invoke("Gathering workout sessions & active energy...", 0.35f)
-                delay(250)
+                delay(200)
 
+                // Distinct by session ID to avoid double-counting between regular and manual tables
                 val regularSessions = gymDao.getSessions()
-                val manualSessions = manualWorkoutDao.getAllManualSessions()
+                val manualOnlySessions = manualWorkoutDao.getAllManualSessions().filter { manual ->
+                    regularSessions.none { it.id == manual.id }
+                }
 
-                workoutsCount = regularSessions.size + manualSessions.size
+                workoutsCount = regularSessions.size + manualOnlySessions.size
 
-                // Estimate MET-based caloric expenditure for strength training (MET ~ 5.5 - 6.0)
-                // Calories = MET * Weight (kg) * (Duration hours)
                 val regularDurationMin = regularSessions.sumOf { (it.durationSeconds / 60L).toInt() }
-                val manualDurationMin = manualSessions.sumOf { it.durationMinutes }
+                val manualDurationMin = manualOnlySessions.sumOf { it.durationMinutes }
                 val totalDurationHours = (regularDurationMin + manualDurationMin) / 60.0
 
                 val caloriesFromDuration = (6.0 * userWeightKg * totalDurationHours).toInt()
                 val regularVolume = regularSessions.sumOf { it.totalVolume }
-                val manualVolume = manualSessions.sumOf { it.totalVolumeKg }
+                val manualVolume = manualOnlySessions.sumOf { it.totalVolumeKg }
                 totalVolume = regularVolume + manualVolume
 
-                // Additional energy factor for volume moved
                 val caloriesFromVolume = (totalVolume / 1000.0 * 25.0).toInt()
                 totalCalories = (caloriesFromDuration + caloriesFromVolume).coerceAtLeast(workoutsCount * 120)
 
@@ -105,7 +153,7 @@ class HealthSyncService @Inject constructor(
             var weightsCount = 0
             if (syncWeights) {
                 onProgressUpdate?.invoke("Syncing body weight logs & BMI records...", 0.65f)
-                delay(200)
+                delay(150)
 
                 val weightLogs = gymDao.getWeightLogs()
                 weightsCount = weightLogs.size
@@ -125,7 +173,7 @@ class HealthSyncService @Inject constructor(
             var waterMl = 0
             if (syncHydration) {
                 onProgressUpdate?.invoke("Syncing hydration and water intake...", 0.85f)
-                delay(200)
+                delay(150)
 
                 val waterLogs = gymDao.getWaterLogs()
                 val latestWater = waterLogs.firstOrNull()
@@ -143,7 +191,7 @@ class HealthSyncService @Inject constructor(
             }
 
             onProgressUpdate?.invoke("Finalizing Google Health sync...", 1.0f)
-            delay(150)
+            delay(100)
 
             val now = System.currentTimeMillis()
             gymDao.updateHealthConnectStatus(linked = true, syncedAt = now)
