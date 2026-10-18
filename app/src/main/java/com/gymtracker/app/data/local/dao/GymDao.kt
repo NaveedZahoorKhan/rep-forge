@@ -298,6 +298,12 @@ interface GymDao {
         now: Long = System.currentTimeMillis(),
     )
 
+    @Query("DELETE FROM weekly_schedule WHERE id = :id")
+    suspend fun deleteSchedule(id: String)
+
+    @Query("DELETE FROM weekly_schedule WHERE weekDay = :weekDay")
+    suspend fun deleteScheduleForDay(weekDay: com.gymtracker.app.data.local.entity.WeekDay)
+
     @Query("DELETE FROM weekly_schedule")
     suspend fun clearSchedules()
 
