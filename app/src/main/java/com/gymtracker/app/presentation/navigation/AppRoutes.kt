@@ -31,3 +31,6 @@ data object NutritionRoute
 
 @Serializable
 data object GeminiCoachRoute
+
+@Serializable
+data object PreviewGalleryRoute
