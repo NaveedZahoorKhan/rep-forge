@@ -259,7 +259,7 @@ fun WorkoutsScreen(
     val tabs = listOf("Workouts", "History", if (editingWorkout != null) "Edit Routine" else "Create", "Library", "Planner")
 
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Workouts", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text("Train", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         TabRow(selectedTabIndex = tab) {
             tabs.forEachIndexed { index, title ->
                 Tab(

@@ -393,7 +393,10 @@ class ProgressViewModel @Inject constructor(
 }
 
 @Composable
-fun ProgressScreen(viewModel: ProgressViewModel = hiltViewModel()) {
+fun ProgressScreen(
+    onOpenNutrition: (() -> Unit)? = null,
+    viewModel: ProgressViewModel = hiltViewModel(),
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
@@ -452,7 +455,7 @@ fun ProgressScreen(viewModel: ProgressViewModel = hiltViewModel()) {
         ) {
             Column {
                 Text(
-                    text = "Progress & Analytics",
+                    text = "Progress",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -538,6 +541,8 @@ fun ProgressScreen(viewModel: ProgressViewModel = hiltViewModel()) {
                     onSignInGoogle = { signInLauncher.launch(viewModel.getGoogleSignInIntent()) },
                     onSyncProgressToHealth = { viewModel.syncProgressToHealth() },
                     onOpenHealthLinkTab = { selectedTab = 2 },
+                    onSelectTab = { selectedTab = it },
+                    onOpenNutrition = onOpenNutrition,
                 )
                 2 -> HealthLinkTab(
                     profile = state.profile,
@@ -641,9 +646,76 @@ private fun OverviewTab(
     onSignInGoogle: () -> Unit,
     onSyncProgressToHealth: () -> Unit,
     onOpenHealthLinkTab: () -> Unit,
+    onSelectTab: (Int) -> Unit = {},
+    onOpenNutrition: (() -> Unit)? = null,
 ) {
     LazyColumn(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        // 1. Consistency Heatmap Card
+        // Interactive Category Drill-in Cards
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Progress Drill-ins", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedCard(
+                            onClick = { onSelectTab(3) }, // Strength
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Icon(Icons.Default.FitnessCenter, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                                Text("Strength & 1RM", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text("${records.size} PRs logged", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        OutlinedCard(
+                            onClick = { onSelectTab(4) }, // Body & Weight
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Icon(Icons.Default.MonitorWeight, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(20.dp))
+                                Text("Body & Weight", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text("${weights.size} weigh-ins", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedCard(
+                            onClick = { onSelectTab(5) }, // Photos
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Icon(Icons.Default.PhotoLibrary, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(20.dp))
+                                Text("Photos Gallery", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text("Transformation history", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        if (onOpenNutrition != null) {
+                            OutlinedCard(
+                                onClick = onOpenNutrition,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Icon(Icons.Default.WaterDrop, contentDescription = null, tint = Color(0xFF29B6F6), modifier = Modifier.size(20.dp))
+                                    Text("Nutrition & Water", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    Text("Macro dashboard", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Consistency Heatmap Card
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),

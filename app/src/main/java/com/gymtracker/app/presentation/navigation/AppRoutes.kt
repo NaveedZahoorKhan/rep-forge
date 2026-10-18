@@ -6,10 +6,14 @@ import kotlinx.serialization.Serializable
 data object OnboardingRoute
 
 @Serializable
-data object DashboardRoute
+data object TodayRoute
+
+typealias DashboardRoute = TodayRoute
 
 @Serializable
-data object WorkoutsRoute
+data object TrainRoute
+
+typealias WorkoutsRoute = TrainRoute
 
 @Serializable
 data object HistoryRoute
@@ -24,7 +28,9 @@ data class ActiveWorkoutRoute(
 data object ProgressRoute
 
 @Serializable
-data object ProfileRoute
+data object YouRoute
+
+typealias ProfileRoute = YouRoute
 
 @Serializable
 data object NutritionRoute
