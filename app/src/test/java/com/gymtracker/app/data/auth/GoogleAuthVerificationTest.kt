@@ -191,6 +191,7 @@ private class FakeGymDao : GymDao {
     override suspend fun upsertMeasurement(item: BodyMeasurementEntity) {}
     override suspend fun upsertPhotos(items: List<ProgressPhotoEntity>) {}
     override suspend fun upsertPhoto(item: ProgressPhotoEntity) {}
+    override suspend fun deleteProgressPhoto(id: String) {}
     override suspend fun upsertNutritionLogs(items: List<NutritionLogEntity>) {}
     override suspend fun upsertNutritionLog(item: NutritionLogEntity) {}
     override suspend fun upsertMeals(items: List<MealEntity>) {}

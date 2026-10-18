@@ -654,6 +654,10 @@ class GymRepositoryImpl @Inject constructor(
         dao.upsertPhoto(photo)
     }
 
+    override suspend fun deleteProgressPhoto(id: String) {
+        dao.deleteProgressPhoto(id)
+    }
+
     override suspend fun upsertNutrition(log: NutritionLogEntity) {
         dao.upsertNutritionLog(log)
     }
