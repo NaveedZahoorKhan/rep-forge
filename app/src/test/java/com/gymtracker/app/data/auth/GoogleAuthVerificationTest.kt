@@ -246,6 +246,7 @@ private class FakeGymDao : GymDao {
     override suspend fun clearSchedules() {}
     override suspend fun clearUserProfile() {}
     override suspend fun deleteWeightLog(id: String) {}
+    override suspend fun deleteMeasurement(id: String) {}
     override suspend fun clearWeightLogs() {}
     override suspend fun clearWaterLogs() {}
     override suspend fun clearMeals() {}

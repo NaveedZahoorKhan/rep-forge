@@ -81,6 +81,7 @@ interface GymRepository {
     suspend fun cancelSession(sessionId: String)
     suspend fun progressForExercise(exerciseId: String): List<ExerciseProgressPoint>
     suspend fun addMeasurement(measurement: BodyMeasurementEntity)
+    suspend fun deleteMeasurement(id: String)
     suspend fun addProgressPhoto(photo: ProgressPhotoEntity)
     suspend fun deleteProgressPhoto(id: String)
     suspend fun upsertNutrition(log: NutritionLogEntity)
