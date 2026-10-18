@@ -1,28 +1,48 @@
 package com.gymtracker.app.presentation.dashboard
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.MonitorWeight
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.SelfImprovement
+import androidx.compose.material.icons.filled.WaterDrop
+import androidx.compose.material.icons.filled.Whatshot
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -35,6 +55,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -53,17 +74,21 @@ import com.gymtracker.app.data.local.entity.WeightLogEntity
 import com.gymtracker.app.data.local.entity.WorkoutEntity
 import com.gymtracker.app.data.local.entity.WorkoutExerciseEntity
 import com.gymtracker.app.data.local.entity.WorkoutSessionEntity
+import com.gymtracker.app.data.local.entity.label
 import com.gymtracker.app.domain.model.DashboardStats
 import com.gymtracker.app.domain.model.DynamicWarmUpRoutine
 import com.gymtracker.app.domain.repository.GymRepository
 import com.gymtracker.app.domain.usecase.DynamicWarmUpCatalog
 import com.gymtracker.app.domain.usecase.WorkoutTemplateCatalog
 import com.gymtracker.app.notification.WorkoutSoundPlayer
+import com.gymtracker.app.presentation.components.DynamicWarmUpCard
 import com.gymtracker.app.presentation.components.EmptyState
 import com.gymtracker.app.presentation.components.MetricCard
 import com.gymtracker.app.presentation.components.PrimaryButton
 import com.gymtracker.app.presentation.components.SectionTitle
+import com.gymtracker.app.presentation.components.WeightLogChartCard
 import com.gymtracker.app.presentation.theme.AppSpacing
+import com.gymtracker.app.presentation.warmup.DynamicWarmUpPlayerModal
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.DayOfWeek
 import java.time.LocalDate
@@ -297,6 +322,7 @@ fun DashboardScreen(
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    var activeWarmUpRoutine by remember { mutableStateOf<DynamicWarmUpRoutine?>(null) }
     LaunchedEffect(state.history, state.activeSession) { viewModel.refreshStats() }
 
     val todayFormattedName = state.todayWeekDay.name.lowercase().replaceFirstChar { it.titlecase() }
@@ -459,6 +485,19 @@ fun DashboardScreen(
             }
         }
 
+        // Dynamic Warm-Up Recommendation Card
+        state.todayWarmUpRoutine?.let { warmUpRoutine ->
+            item {
+                DynamicWarmUpCard(
+                    suggestedRoutine = warmUpRoutine,
+                    scheduledWorkoutName = state.todayWorkout?.name ?: state.nextScheduledWorkout?.name.orEmpty(),
+                    onStartWarmUp = { routineToRun ->
+                        activeWarmUpRoutine = routineToRun
+                    },
+                )
+            }
+        }
+
         // WEEKLY CONSISTENCY STRIP
         item {
             Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
@@ -567,6 +606,16 @@ fun DashboardScreen(
             }
         }
 
+        // WEIGHT LOGGING & CHART CARD
+        item {
+            WeightLogChartCard(
+                weights = state.weights,
+                unitSystem = state.profile.unitSystem,
+                onAddWeight = viewModel::addWeight,
+                onDeleteWeight = viewModel::deleteWeight,
+            )
+        }
+
         // OPTIONAL COACH SUGGESTION
         onOpenGemini?.let { openGemini ->
             item {
@@ -628,5 +677,18 @@ fun DashboardScreen(
                 }
             }
         }
+    }
+
+    activeWarmUpRoutine?.let { routine ->
+        DynamicWarmUpPlayerModal(
+            routine = routine,
+            soundPlayer = viewModel.soundPlayer,
+            onDismiss = { activeWarmUpRoutine = null },
+            onStartWorkout = { wId ->
+                activeWarmUpRoutine = null
+                onStartWorkout(wId)
+            },
+            targetWorkoutId = state.todayWorkout?.id ?: state.nextScheduledWorkout?.id.orEmpty(),
+        )
     }
 }

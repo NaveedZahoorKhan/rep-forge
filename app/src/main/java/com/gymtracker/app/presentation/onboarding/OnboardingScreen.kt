@@ -10,6 +10,7 @@ import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -116,7 +117,7 @@ data class PlanInputsSnapshot(
 )
 
 data class OnboardingUiState(
-    val currentStep: Int = 0, // 0 = Welcome & Goals, 1 = Schedule & Equipment, 2 = Measurements (Optional), 3 = Review & Plan
+    val currentStep: Int = 0,
     val isGeneratingPlan: Boolean = false,
     val generatedPlan: GeminiWorkoutBuilderResult? = null,
     val generatedPlanInputs: PlanInputsSnapshot? = null,
@@ -366,41 +367,6 @@ fun OnboardingScreen(
     }
     var calories by remember(storedProfile?.calorieGoal) { mutableStateOf((storedProfile?.calorieGoal ?: 2100).toString()) }
 
-    val heightVal = height.toDoubleOrNull()
-    val weightVal = weight.toDoubleOrNull()
-    val caloriesVal = calories.toIntOrNull()
-
-    val heightError = when {
-        height.isBlank() -> null // Optional
-        heightVal == null || heightVal <= 0 -> "Enter a valid positive number"
-        unitSystem == UnitSystem.METRIC && (heightVal < 50.0 || heightVal > 280.0) -> "Must be between 50 and 280 cm"
-        unitSystem == UnitSystem.IMPERIAL && (heightVal < 20.0 || heightVal > 110.0) -> "Must be between 20 and 110 inches"
-        else -> null
-    }
-
-    val weightError = when {
-        weight.isBlank() -> null // Optional
-        weightVal == null || weightVal <= 0 -> "Enter a valid positive number"
-        unitSystem == UnitSystem.METRIC && (weightVal < 20.0 || weightVal > 300.0) -> "Must be between 20 and 300 kg"
-        unitSystem == UnitSystem.IMPERIAL && (weightVal < 45.0 || weightVal > 660.0) -> "Must be between 45 and 660 lbs"
-        else -> null
-    }
-
-    val caloriesError = when {
-        calories.isBlank() -> null // Optional
-        caloriesVal == null || caloriesVal <= 0 -> "Enter a valid positive number"
-        caloriesVal < 800 || caloriesVal > 10000 -> "Must be between 800 and 10,000 kcal"
-        else -> null
-    }
-
-    val isStepValid = heightError == null && weightError == null && caloriesError == null
-
-    val signInLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        viewModel.handleGoogleSignIn(result.data) { loadedName ->
-            name = loadedName
-        }
-    }
-
     fun computeCalories(): Int {
         val rawWeight = weight.toDoubleOrNull() ?: 75.0
         val rawHeight = height.toDoubleOrNull() ?: 175.0
@@ -412,6 +378,57 @@ fun OnboardingScreen(
             gender = gender,
             goal = primaryGoal,
         )
+    }
+
+    fun handleUnitChange(newUnit: UnitSystem) {
+        if (newUnit == unitSystem) return
+        val currentH = height.toDoubleOrNull()
+        val currentW = weight.toDoubleOrNull()
+
+        if (newUnit == UnitSystem.IMPERIAL) {
+            if (currentH != null) height = String.format(java.util.Locale.US, "%.1f", currentH / 2.54).removeSuffix(".0")
+            if (currentW != null) weight = String.format(java.util.Locale.US, "%.1f", currentW / 0.45359237).removeSuffix(".0")
+        } else {
+            if (currentH != null) height = String.format(java.util.Locale.US, "%.1f", currentH * 2.54).removeSuffix(".0")
+            if (currentW != null) weight = String.format(java.util.Locale.US, "%.1f", currentW * 0.45359237).removeSuffix(".0")
+        }
+        unitSystem = newUnit
+        calories = computeCalories().toString()
+    }
+
+    val heightVal = height.toDoubleOrNull()
+    val weightVal = weight.toDoubleOrNull()
+    val caloriesVal = calories.toIntOrNull()
+
+    val heightError = when {
+        height.isBlank() -> null
+        heightVal == null || heightVal <= 0 -> "Enter a valid positive number"
+        unitSystem == UnitSystem.METRIC && (heightVal < 50.0 || heightVal > 280.0) -> "Must be between 50 and 280 cm"
+        unitSystem == UnitSystem.IMPERIAL && (heightVal < 20.0 || heightVal > 110.0) -> "Must be between 20 and 110 inches"
+        else -> null
+    }
+
+    val weightError = when {
+        weight.isBlank() -> null
+        weightVal == null || weightVal <= 0 -> "Enter a valid positive number"
+        unitSystem == UnitSystem.METRIC && (weightVal < 20.0 || weightVal > 300.0) -> "Must be between 20 and 300 kg"
+        unitSystem == UnitSystem.IMPERIAL && (weightVal < 45.0 || weightVal > 660.0) -> "Must be between 45 and 660 lbs"
+        else -> null
+    }
+
+    val caloriesError = when {
+        calories.isBlank() -> null
+        caloriesVal == null || caloriesVal <= 0 -> "Enter a valid positive number"
+        caloriesVal < 800 || caloriesVal > 10000 -> "Must be between 800 and 10,000 kcal"
+        else -> null
+    }
+
+    val isStepValid = heightError == null && weightError == null && caloriesError == null
+
+    val signInLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        viewModel.handleGoogleSignIn(result.data) { loadedName ->
+            name = loadedName
+        }
     }
 
     var selectedRoutine by remember(storedProfile?.preferredSplit) {
@@ -499,8 +516,16 @@ fun OnboardingScreen(
                 0 -> StepOneWelcomeGoals(
                     name = name,
                     onNameChange = { name = it },
+                    gender = gender,
+                    onGenderChange = {
+                        gender = it
+                        calories = computeCalories().toString()
+                    },
                     primaryGoal = primaryGoal,
-                    onGoalChange = { primaryGoal = it },
+                    onGoalChange = {
+                        primaryGoal = it
+                        calories = computeCalories().toString()
+                    },
                     experienceLevel = experienceLevel,
                     onExperienceChange = { experienceLevel = it },
                     isGoogleLinked = storedProfile?.googleLinked == true,
@@ -522,14 +547,23 @@ fun OnboardingScreen(
 
                 2 -> StepThreeMeasurements(
                     gender = gender,
-                    onGenderChange = { gender = it },
+                    onGenderChange = {
+                        gender = it
+                        calories = computeCalories().toString()
+                    },
                     unitSystem = unitSystem,
-                    onUnitChange = { unitSystem = it },
+                    onUnitChange = { handleUnitChange(it) },
                     height = height,
-                    onHeightChange = { height = it },
+                    onHeightChange = {
+                        height = it
+                        if (it.toDoubleOrNull() != null) calories = computeCalories().toString()
+                    },
                     heightError = heightError,
                     weight = weight,
-                    onWeightChange = { weight = it },
+                    onWeightChange = {
+                        weight = it
+                        if (it.toDoubleOrNull() != null) calories = computeCalories().toString()
+                    },
                     weightError = weightError,
                     calories = calories,
                     onCaloriesChange = { calories = it },
@@ -613,6 +647,8 @@ fun OnboardingScreen(
 private fun StepOneWelcomeGoals(
     name: String,
     onNameChange: (String) -> Unit,
+    gender: Gender,
+    onGenderChange: (Gender) -> Unit,
     primaryGoal: String,
     onGoalChange: (String) -> Unit,
     experienceLevel: String,
@@ -638,7 +674,7 @@ private fun StepOneWelcomeGoals(
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.padding(AppSpacing.lg), verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
@@ -674,6 +710,22 @@ private fun StepOneWelcomeGoals(
             )
         }
 
+        // Gender Selector
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
+                Text("Gender", style = MaterialTheme.typography.titleMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
+                    Gender.entries.forEach { entry ->
+                        FilterChip(
+                            selected = gender == entry,
+                            onClick = { onGenderChange(entry) },
+                            label = { Text(entry.name.lowercase().replaceFirstChar { it.titlecase() }) }
+                        )
+                    }
+                }
+            }
+        }
+
         item {
             Text("Primary Goal", style = MaterialTheme.typography.titleMedium)
         }
@@ -685,7 +737,7 @@ private fun StepOneWelcomeGoals(
                 colors = CardDefaults.outlinedCardColors(
                     containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surface
                 ),
-                border = androidx.compose.foundation.BorderStroke(
+                border = BorderStroke(
                     width = if (isSelected) 2.dp else 1.dp,
                     color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
                 ),
@@ -741,6 +793,7 @@ private fun StepOneWelcomeGoals(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun StepTwoScheduleEquipment(
     trainingDays: Int,
@@ -825,11 +878,23 @@ private fun StepTwoScheduleEquipment(
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.padding(AppSpacing.lg), verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                     Text("Add Gym Equipment (Optional)", style = MaterialTheme.typography.titleMedium)
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
+                        listOf("Gym", "Home").forEach { loc ->
+                            FilterChip(
+                                selected = location == loc,
+                                onClick = { location = loc },
+                                label = { Text(if (loc == "Gym") "Commercial Gym" else "Home") },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+
                     OutlinedTextField(
                         value = machineName,
                         onValueChange = { machineName = it },
@@ -837,6 +902,17 @@ private fun StepTwoScheduleEquipment(
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
+
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("Machine", "Free Weight", "Cable", "Cardio").forEach { cat ->
+                            FilterChip(
+                                selected = category.equals(cat, ignoreCase = true),
+                                onClick = { category = cat },
+                                label = { Text(cat) }
+                            )
+                        }
+                    }
+
                     PrimaryButton(
                         text = "Add Equipment",
                         onClick = {
@@ -862,7 +938,10 @@ private fun StepTwoScheduleEquipment(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(eq.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                    Column {
+                        Text(eq.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                        Text("${eq.location} • ${eq.category}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     IconButton(onClick = { onRemoveEquipment(eq.id) }) {
                         Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
                     }
@@ -915,10 +994,21 @@ private fun StepThreeMeasurements(
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.padding(AppSpacing.lg), verticalArrangement = Arrangement.spacedBy(AppSpacing.md)) {
+                    Text("Gender", style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
+                        Gender.entries.forEach { entry ->
+                            FilterChip(
+                                selected = gender == entry,
+                                onClick = { onGenderChange(entry) },
+                                label = { Text(entry.name.lowercase().replaceFirstChar { it.titlecase() }) }
+                            )
+                        }
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -957,6 +1047,15 @@ private fun StepThreeMeasurements(
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Calories Goal", style = MaterialTheme.typography.labelMedium)
+                        SecondaryButton(text = "Auto-calculate", onClick = onAutoCalculateCalories, modifier = Modifier.height(32.dp))
+                    }
 
                     OutlinedTextField(
                         value = calories,
@@ -1031,6 +1130,56 @@ private fun StepFourReviewPlan(
                         SecondaryButton(text = "Edit", onClick = { onEditStep(1) }, modifier = Modifier.height(32.dp))
                     }
                     Text("Routine: $selectedRoutine • $trainingDays Days/Week • $equipmentsCount Machines", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+
+        // Gemini AI Plan Generation Card & Preview
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(AppSpacing.lg), verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Text("Gemini AI Custom Plan (Optional)", style = MaterialTheme.typography.titleMedium)
+                    }
+                    Text("Gemini can build a custom $selectedRoutine plan matching your $equipmentsCount registered machines and $primaryGoal goal.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                    OutlinedTextField(
+                        value = personalNotes,
+                        onValueChange = onNotesChange,
+                        label = { Text("Notes for Gemini Coach (Optional)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2
+                    )
+
+                    PrimaryButton(
+                        text = if (uiState.generatedPlan != null) "Regenerate Gemini Plan" else "Generate Gemini Plan",
+                        onClick = onGeneratePlan,
+                        isLoading = uiState.isGeneratingPlan,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+
+        // Generated Plan Summary if present
+        uiState.generatedPlan?.let { plan ->
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(AppSpacing.lg), verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
+                        Text("Generated Gemini Routine (${plan.options.size} Days)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        plan.options.forEach { opt ->
+                            Text("• ${opt.title} (${opt.exercises.size} exercises)", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
                 }
             }
         }

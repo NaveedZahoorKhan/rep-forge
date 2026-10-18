@@ -602,9 +602,6 @@ private fun EquipmentsPanel(
     equipments: List<GymEquipmentEntity>,
     viewModel: ProfileViewModel,
 ) {
-    val snackbarHostState = remember { SnackbarHostState() }
-    val coroutineScope = rememberCoroutineScope()
-
     var showAddForm by remember { mutableStateOf(false) }
     var editingEquipment by remember { mutableStateOf<GymEquipmentEntity?>(null) }
     var equipmentToDelete by remember { mutableStateOf<GymEquipmentEntity?>(null) }
@@ -680,6 +677,19 @@ private fun EquipmentsPanel(
                                 style = MaterialTheme.typography.titleMedium
                             )
 
+                            // Location selector
+                            Text("Location", style = MaterialTheme.typography.labelMedium)
+                            Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
+                                listOf("Gym", "Home").forEach { loc ->
+                                    FilterChip(
+                                        selected = location == loc,
+                                        onClick = { location = loc },
+                                        label = { Text(if (loc == "Gym") "Commercial Gym" else "Home") },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+
                             OutlinedTextField(
                                 value = machineName,
                                 onValueChange = { machineName = it },
@@ -687,6 +697,54 @@ private fun EquipmentsPanel(
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true
                             )
+
+                            // Category selector
+                            Text("Category", style = MaterialTheme.typography.labelMedium)
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                listOf("Machine", "Free Weight", "Cable", "Cardio", "Bodyweight").forEach { cat ->
+                                    FilterChip(
+                                        selected = category.equals(cat, ignoreCase = true),
+                                        onClick = { category = cat },
+                                        label = { Text(cat) }
+                                    )
+                                }
+                            }
+
+                            OutlinedTextField(
+                                value = machineNotes,
+                                onValueChange = { machineNotes = it },
+                                label = { Text("Notes (seat height, attachments, etc.)") },
+                                modifier = Modifier.fillMaxWidth(),
+                                minLines = 2
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm)
+                            ) {
+                                SecondaryButton(
+                                    text = if (selectedPhotoUri != null || !existingPhotoUriStr.isNullOrBlank()) "Change Photo" else "Upload Photo",
+                                    onClick = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                                    modifier = Modifier.weight(1f)
+                                )
+
+                                if (selectedPhotoUri != null || !existingPhotoUriStr.isNullOrBlank()) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(46.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp))
+                                    ) {
+                                        AsyncImage(
+                                            model = selectedPhotoUri ?: existingPhotoUriStr,
+                                            contentDescription = null,
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                    }
+                                }
+                            }
 
                             PrimaryButton(
                                 text = if (editingEquipment != null) "Update Equipment" else "Save Equipment",
@@ -738,6 +796,18 @@ private fun EquipmentsPanel(
                             Text(eq.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                             Text("${eq.location} • ${eq.category}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
+                        IconButton(onClick = {
+                            editingEquipment = eq
+                            machineName = eq.name
+                            location = eq.location
+                            category = eq.category
+                            machineNotes = eq.notes
+                            existingPhotoUriStr = eq.photoUri
+                            selectedPhotoUri = eq.photoUri?.let { Uri.parse(it) }
+                            showAddForm = true
+                        }) {
+                            Icon(Icons.Default.Edit, contentDescription = "Edit", tint = MaterialTheme.colorScheme.primary)
+                        }
                         IconButton(onClick = { equipmentToDelete = eq }) {
                             Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
                         }
@@ -746,9 +816,31 @@ private fun EquipmentsPanel(
             }
         }
     }
+
+    if (equipmentToDelete != null) {
+        val target = equipmentToDelete!!
+        AlertDialog(
+            onDismissRequest = { equipmentToDelete = null },
+            title = { Text("Delete Equipment?") },
+            text = { Text("Are you sure you want to delete \"${target.name}\"?") },
+            confirmButton = {
+                DestructiveButton(
+                    text = "Delete",
+                    onClick = {
+                        val deleted = target
+                        equipmentToDelete = null
+                        viewModel.deleteEquipment(deleted.id)
+                    }
+                )
+            },
+            dismissButton = {
+                SecondaryButton(text = "Cancel", onClick = { equipmentToDelete = null })
+            }
+        )
+    }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun SettingsPanel(profile: UserProfileEntity, reminders: List<ReminderEntity>, viewModel: ProfileViewModel) {
     var name by remember(profile.displayName) { mutableStateOf(profile.displayName) }
@@ -766,6 +858,41 @@ private fun SettingsPanel(profile: UserProfileEntity, reminders: List<ReminderEn
     }
 
     var split by remember(profile.preferredSplit) { mutableStateOf(profile.preferredSplit.ifBlank { "Push Pull Legs (PPL)" }) }
+    var rest by remember(profile.defaultRestSeconds) { mutableStateOf(profile.defaultRestSeconds.toString()) }
+    var calories by remember(profile.calorieGoal) { mutableStateOf(profile.calorieGoal.toString()) }
+    var water by remember(profile.waterGoalMl) { mutableStateOf(profile.waterGoalMl.toString()) }
+
+    var reminderTitle by remember { mutableStateOf("Workout reminder") }
+    var selectedHour by remember { mutableIntStateOf(18) }
+    var selectedMinute by remember { mutableIntStateOf(0) }
+    var showTimePicker by remember { mutableStateOf(false) }
+
+    var waterInterval by remember { mutableIntStateOf(2) }
+    val isWaterReminderActive = reminders.any { it.id == "water-reminder" && it.enabled }
+
+    val goals = listOf("Lose weight", "Build muscle", "Gain strength", "Tone & Endurance")
+
+    val availableSplits = listOf(
+        "Push Pull Legs (PPL)",
+        "PPLUL (Push Pull Legs Upper Lower)",
+        "Upper / Lower Split",
+        "Bro Split (Body Part Split)",
+        "Full Body Circuit",
+    )
+
+    fun autoCalculateCalories() {
+        val rawW = weightStr.toDoubleOrNull() ?: 75.0
+        val rawH = heightStr.toDoubleOrNull() ?: 175.0
+        val wKg = if (unitSystem == UnitSystem.IMPERIAL) rawW / 2.20462262185 else rawW
+        val hCm = if (unitSystem == UnitSystem.IMPERIAL) rawH * 2.54 else rawH
+        val calculated = NutritionCalculator.autoCalculateTargetCalories(
+            weightKg = wKg,
+            heightCm = hCm,
+            gender = gender,
+            goal = goal,
+        )
+        calories = calculated.toString()
+    }
 
     LazyColumn(verticalArrangement = Arrangement.spacedBy(AppSpacing.lg)) {
         item {
@@ -777,6 +904,69 @@ private fun SettingsPanel(profile: UserProfileEntity, reminders: List<ReminderEn
                     SectionTitle("Account & Preferences")
 
                     OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
+
+                    // Gender Selection
+                    Text("Gender", style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
+                        Gender.entries.forEach { entry ->
+                            FilterChip(
+                                selected = gender == entry,
+                                onClick = { gender = entry },
+                                label = { Text(entry.name.lowercase().replaceFirstChar { it.titlecase() }) }
+                            )
+                        }
+                    }
+
+                    // Primary Goal Selection
+                    Text("Primary Goal", style = MaterialTheme.typography.labelMedium)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        goals.forEach { g ->
+                            FilterChip(
+                                selected = goal.equals(g, ignoreCase = true),
+                                onClick = {
+                                    goal = g
+                                    autoCalculateCalories()
+                                },
+                                label = { Text(g) }
+                            )
+                        }
+                    }
+
+                    // Unit System Switcher
+                    Text("Unit System", style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
+                        UnitSystem.entries.forEach { unit ->
+                            FilterChip(
+                                selected = unitSystem == unit,
+                                onClick = { unitSystem = unit },
+                                label = { Text(if (unit == UnitSystem.METRIC) "Metric (kg/cm)" else "Imperial (lb/in)") }
+                            )
+                        }
+                    }
+
+                    // Theme Mode Switcher
+                    Text("Theme Mode", style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
+                        ThemeMode.entries.forEach { mode ->
+                            FilterChip(
+                                selected = profile.themeMode == mode,
+                                onClick = { viewModel.save(profile.copy(themeMode = mode)) },
+                                label = { Text(mode.name.lowercase().replaceFirstChar { it.titlecase() }) }
+                            )
+                        }
+                    }
+
+                    // Routine Split Selector
+                    Text("Preferred Routine Split", style = MaterialTheme.typography.labelMedium)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        availableSplits.forEach { splitItem ->
+                            FilterChip(
+                                selected = split.equals(splitItem, ignoreCase = true),
+                                onClick = { split = splitItem },
+                                label = { Text(splitItem) }
+                            )
+                        }
+                    }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.md), modifier = Modifier.fillMaxWidth()) {
                         OutlinedTextField(
@@ -791,6 +981,38 @@ private fun SettingsPanel(profile: UserProfileEntity, reminders: List<ReminderEn
                             label = { Text("Weight (${if (unitSystem == UnitSystem.METRIC) "kg" else "lb"})") },
                             modifier = Modifier.weight(1f)
                         )
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.md), modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = calories,
+                            onValueChange = { calories = it },
+                            label = { Text("Daily Calories (kcal)") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = water,
+                            onValueChange = { water = it },
+                            label = { Text("Water Goal (ml)") },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    OutlinedTextField(
+                        value = rest,
+                        onValueChange = { rest = it },
+                        label = { Text("Default Rest Seconds") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    // Sound & Vibration Toggles
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("Sound Cues", style = MaterialTheme.typography.bodyMedium)
+                        Switch(checked = profile.soundEnabled, onCheckedChange = { viewModel.save(profile.copy(soundEnabled = it)) })
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("Vibration Feedback", style = MaterialTheme.typography.bodyMedium)
+                        Switch(checked = profile.vibrationEnabled, onCheckedChange = { viewModel.save(profile.copy(vibrationEnabled = it)) })
                     }
 
                     PrimaryButton(
@@ -814,6 +1036,9 @@ private fun SettingsPanel(profile: UserProfileEntity, reminders: List<ReminderEn
                                     heightCm = canonicalH,
                                     weightKg = canonicalW,
                                     preferredSplit = split,
+                                    defaultRestSeconds = rest.toIntOrNull() ?: profile.defaultRestSeconds,
+                                    calorieGoal = calories.toIntOrNull() ?: profile.calorieGoal,
+                                    waterGoalMl = water.toIntOrNull() ?: profile.waterGoalMl,
                                 )
                             )
                         },
@@ -822,6 +1047,112 @@ private fun SettingsPanel(profile: UserProfileEntity, reminders: List<ReminderEn
                 }
             }
         }
+
+        // Reminders & Notifications Section
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Column(Modifier.padding(AppSpacing.lg), verticalArrangement = Arrangement.spacedBy(AppSpacing.md)) {
+                    SectionTitle("Reminders & Notifications")
+
+                    // Hydration Reminder
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Water Hydration Reminders", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                        Switch(
+                            checked = isWaterReminderActive,
+                            onCheckedChange = { on ->
+                                if (on) viewModel.scheduleWaterReminder(waterInterval) else viewModel.cancelWaterReminder()
+                            }
+                        )
+                    }
+
+                    if (isWaterReminderActive) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            listOf(1, 2, 3, 4).forEach { hours ->
+                                FilterChip(
+                                    selected = waterInterval == hours,
+                                    onClick = {
+                                        waterInterval = hours
+                                        viewModel.scheduleWaterReminder(hours)
+                                    },
+                                    label = { Text("Every ${hours}h") },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+
+                    HorizontalDivider()
+
+                    // Daily Workout Reminder
+                    OutlinedTextField(
+                        value = reminderTitle,
+                        onValueChange = { reminderTitle = it },
+                        label = { Text("Daily Workout Reminder Title") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Time: ${String.format(java.util.Locale.getDefault(), "%02d:%02d", selectedHour, selectedMinute)}",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        SecondaryButton(text = "Select Time", onClick = { showTimePicker = true })
+                    }
+
+                    PrimaryButton(
+                        text = "Schedule Daily Workout Reminder",
+                        onClick = {
+                            val timeMinutes = selectedHour * 60 + selectedMinute
+                            viewModel.createReminder(reminderTitle, timeMinutes)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+    }
+
+    if (showTimePicker) {
+        val timePickerState = rememberTimePickerState(
+            initialHour = selectedHour,
+            initialMinute = selectedMinute,
+            is24Hour = true
+        )
+        AlertDialog(
+            onDismissRequest = { showTimePicker = false },
+            confirmButton = {
+                PrimaryButton(
+                    text = "OK",
+                    onClick = {
+                        selectedHour = timePickerState.hour
+                        selectedMinute = timePickerState.minute
+                        showTimePicker = false
+                    }
+                )
+            },
+            dismissButton = {
+                SecondaryButton(text = "Cancel", onClick = { showTimePicker = false })
+            },
+            title = { Text("Set Reminder Time") },
+            text = {
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    TimePicker(state = timePickerState)
+                }
+            }
+        )
     }
 }
 
@@ -835,6 +1166,7 @@ private fun DataPanel(
     onOpenHealthSettings: () -> Unit,
 ) {
     var showDeleteConfirmation by remember { mutableStateOf(false) }
+    var importText by remember { mutableStateOf("") }
 
     if (showDeleteConfirmation) {
         AlertDialog(
@@ -857,6 +1189,46 @@ private fun DataPanel(
     }
 
     LazyColumn(verticalArrangement = Arrangement.spacedBy(AppSpacing.lg)) {
+        // Google Health & Cloud Backup Section
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Column(Modifier.padding(AppSpacing.lg), verticalArrangement = Arrangement.spacedBy(AppSpacing.md)) {
+                    SectionTitle("Google Account & Health Connect")
+
+                    if (profile.googleLinked && !profile.googleEmail.isNullOrBlank()) {
+                        GoogleAccountProfileCard(
+                            email = profile.googleEmail,
+                            displayName = profile.googleDisplayName ?: "Athlete",
+                            photoUrl = profile.googlePhotoUrl,
+                            healthLinked = profile.healthConnectLinked,
+                            onSignOut = onSignOut
+                        )
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm), modifier = Modifier.fillMaxWidth()) {
+                            PrimaryButton(text = "Sync Health", onClick = onSyncHealth, modifier = Modifier.weight(1f))
+                            SecondaryButton(text = "Health Settings", onClick = onOpenHealthSettings, modifier = Modifier.weight(1f))
+                        }
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm), modifier = Modifier.fillMaxWidth()) {
+                            SecondaryButton(text = "Cloud Backup", onClick = viewModel::cloudBackup, modifier = Modifier.weight(1f))
+                            SecondaryButton(text = "Cloud Restore", onClick = viewModel::cloudRestore, modifier = Modifier.weight(1f))
+                        }
+                    } else {
+                        Text(
+                            "Sign in with Google to sync workout history with Google Health Connect and back up data to cloud storage.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        GoogleSignInButton(onClick = onSignIn, modifier = Modifier.fillMaxWidth())
+                    }
+                }
+            }
+        }
+
+        // Import & Export Section
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -867,6 +1239,26 @@ private fun DataPanel(
 
                     PrimaryButton(text = "Export JSON Backup", onClick = viewModel::exportJson, modifier = Modifier.fillMaxWidth())
                     SecondaryButton(text = "Export CSV Data", onClick = viewModel::exportCsv, modifier = Modifier.fillMaxWidth())
+
+                    HorizontalDivider()
+
+                    OutlinedTextField(
+                        value = importText,
+                        onValueChange = { importText = it },
+                        label = { Text("Import JSON Backup Text") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                    )
+                    SecondaryButton(
+                        text = "Import JSON Backup",
+                        onClick = {
+                            if (importText.isNotBlank()) {
+                                viewModel.importJson(importText) { importText = "" }
+                            }
+                        },
+                        enabled = importText.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
 
                     HorizontalDivider()
 
