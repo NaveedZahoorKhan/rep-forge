@@ -26,6 +26,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -126,7 +128,7 @@ data class PlanInputsSnapshot(
 )
 
 data class OnboardingUiState(
-    val currentStep: Int = 0, // 0 = Preferences/Goal, 1 = Gym Machines & Equipment, 2 = Routine & Gemini Plan
+    val currentStep: Int = 0, // 0 = Welcome, 1 = Goals & Experience, 2 = Schedule & Equipment, 3 = Optional Measurements, 4 = Plan Review
     val isGeneratingPlan: Boolean = false,
     val generatedPlan: GeminiWorkoutBuilderResult? = null,
     val generatedPlanInputs: PlanInputsSnapshot? = null,
@@ -179,7 +181,7 @@ class OnboardingViewModel @Inject constructor(
     }
 
     fun setStep(step: Int) {
-        _uiState.update { it.copy(currentStep = step.coerceIn(0, 2), errorMessage = null) }
+        _uiState.update { it.copy(currentStep = step.coerceIn(0, 4), errorMessage = null) }
     }
 
     fun addEquipment(
@@ -357,8 +359,6 @@ fun OnboardingScreen(
     val equipments by viewModel.equipments.collectAsStateWithLifecycle()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
-    // Step 1 Profile & Preferences state
-    // Default gender set explicitly to MALE as requested
     var name by remember(storedProfile?.displayName) { mutableStateOf(storedProfile?.displayName ?: "Athlete") }
     var gender by remember(storedProfile?.gender) { mutableStateOf(storedProfile?.gender ?: Gender.MALE) }
     var primaryGoal by remember(storedProfile?.primaryGoal) { mutableStateOf(storedProfile?.primaryGoal ?: "Lose weight") }
@@ -366,28 +366,36 @@ fun OnboardingScreen(
     var trainingDays by remember { mutableIntStateOf(4) }
     var unitSystem by remember(storedProfile?.unitSystem) { mutableStateOf(storedProfile?.unitSystem ?: UnitSystem.METRIC) }
 
-    // Store display string values for input fields
     var height by remember(storedProfile?.heightCm, storedProfile?.unitSystem) {
         val initialUnit = storedProfile?.unitSystem ?: UnitSystem.METRIC
-        val rawCm = storedProfile?.heightCm ?: 175.0
-        val displayVal = if (initialUnit == UnitSystem.IMPERIAL) rawCm / 2.54 else rawCm
-        mutableStateOf(String.format(java.util.Locale.US, "%.1f", displayVal).removeSuffix(".0"))
+        val rawCm = storedProfile?.heightCm
+        if (rawCm == null) {
+            mutableStateOf("")
+        } else {
+            val displayVal = if (initialUnit == UnitSystem.IMPERIAL) rawCm / 2.54 else rawCm
+            mutableStateOf(String.format(java.util.Locale.US, "%.1f", displayVal).removeSuffix(".0"))
+        }
     }
     var weight by remember(storedProfile?.weightKg, storedProfile?.unitSystem) {
         val initialUnit = storedProfile?.unitSystem ?: UnitSystem.METRIC
-        val rawKg = storedProfile?.weightKg ?: 75.0
-        val displayVal = if (initialUnit == UnitSystem.IMPERIAL) rawKg / 0.45359237 else rawKg
-        mutableStateOf(String.format(java.util.Locale.US, "%.1f", displayVal).removeSuffix(".0"))
+        val rawKg = storedProfile?.weightKg
+        if (rawKg == null) {
+            mutableStateOf("")
+        } else {
+            val displayVal = if (initialUnit == UnitSystem.IMPERIAL) rawKg / 0.45359237 else rawKg
+            mutableStateOf(String.format(java.util.Locale.US, "%.1f", displayVal).removeSuffix(".0"))
+        }
     }
-    var calories by remember(storedProfile?.calorieGoal) { mutableStateOf((storedProfile?.calorieGoal ?: 2100).toString()) }
+    var calories by remember(storedProfile?.calorieGoal) {
+        mutableStateOf(storedProfile?.calorieGoal?.toString() ?: "")
+    }
 
-    // Validation state
     val heightVal = height.toDoubleOrNull()
     val weightVal = weight.toDoubleOrNull()
     val caloriesVal = calories.toIntOrNull()
 
     val heightError = when {
-        height.isBlank() -> "Height is required"
+        height.isBlank() -> null
         heightVal == null || heightVal <= 0 -> "Enter a valid positive number"
         unitSystem == UnitSystem.METRIC && (heightVal < 50.0 || heightVal > 280.0) -> "Must be between 50 and 280 cm"
         unitSystem == UnitSystem.IMPERIAL && (heightVal < 20.0 || heightVal > 110.0) -> "Must be between 20 and 110 inches"
@@ -395,7 +403,7 @@ fun OnboardingScreen(
     }
 
     val weightError = when {
-        weight.isBlank() -> "Weight is required"
+        weight.isBlank() -> null
         weightVal == null || weightVal <= 0 -> "Enter a valid positive number"
         unitSystem == UnitSystem.METRIC && (weightVal < 20.0 || weightVal > 300.0) -> "Must be between 20 and 300 kg"
         unitSystem == UnitSystem.IMPERIAL && (weightVal < 45.0 || weightVal > 660.0) -> "Must be between 45 and 660 lbs"
@@ -403,13 +411,13 @@ fun OnboardingScreen(
     }
 
     val caloriesError = when {
-        calories.isBlank() -> "Calories goal is required"
+        calories.isBlank() -> null
         caloriesVal == null || caloriesVal <= 0 -> "Enter a valid positive number"
         caloriesVal < 800 || caloriesVal > 10000 -> "Must be between 800 and 10,000 kcal"
         else -> null
     }
 
-    val isStepOneValid = heightError == null && weightError == null && caloriesError == null
+    val isStepMeasurementsValid = heightError == null && weightError == null && caloriesError == null
 
     val signInLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         viewModel.handleGoogleSignIn(result.data) { loadedName ->
@@ -442,7 +450,6 @@ fun OnboardingScreen(
         val currentW = weight.toDoubleOrNull()
 
         if (newUnit == UnitSystem.IMPERIAL) {
-            // Converting Metric (cm, kg) -> Imperial (in, lb)
             if (currentH != null) {
                 val inches = currentH / 2.54
                 height = String.format(java.util.Locale.US, "%.1f", inches).removeSuffix(".0")
@@ -452,7 +459,6 @@ fun OnboardingScreen(
                 weight = String.format(java.util.Locale.US, "%.1f", lbs).removeSuffix(".0")
             }
         } else {
-            // Converting Imperial (in, lb) -> Metric (cm, kg)
             if (currentH != null) {
                 val cm = currentH * 2.54
                 height = String.format(java.util.Locale.US, "%.1f", cm).removeSuffix(".0")
@@ -463,30 +469,21 @@ fun OnboardingScreen(
             }
         }
         unitSystem = newUnit
-        if (height.toDoubleOrNull() != null && weight.toDoubleOrNull() != null) {
-            calories = computeCalories(unit = newUnit).toString()
-        }
     }
 
-    // Auto-compute baseline calories on initial appearance if default
-    LaunchedEffect(Unit) {
-        if (storedProfile == null || storedProfile?.calorieGoal == 2200) {
-            calories = computeCalories().toString()
-        }
-    }
-
-    // Step 2 & 3 state
     var selectedRoutine by remember(storedProfile?.preferredSplit) {
         mutableStateOf(storedProfile?.preferredSplit ?: "Push Pull Legs (PPL)")
     }
     var personalNotes by remember { mutableStateOf("") }
 
-    val steps = listOf("1. Goals & Body", "2. Gym Machines", "3. Gemini Routine")
+    val steps = listOf("1. Welcome", "2. Goals & Experience", "3. Schedule & Equipment", "4. Optional Measurements", "5. Plan Review")
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            .imePadding()
+            .navigationBarsPadding()
     ) {
         // Top Header
         Surface(
@@ -524,7 +521,7 @@ fun OnboardingScreen(
                         Column {
                             Text("GymTracker Setup", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                             Text(
-                                steps[uiState.currentStep],
+                                steps[uiState.currentStep.coerceIn(0, 4)],
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary,
                                 fontWeight = FontWeight.SemiBold
@@ -547,7 +544,7 @@ fun OnboardingScreen(
 
                 // Step progress bar
                 LinearProgressIndicator(
-                    progress = { (uiState.currentStep + 1) / 3f },
+                    progress = { (uiState.currentStep + 1) / 5f },
                     modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
                     color = MaterialTheme.colorScheme.primary,
                     trackColor = MaterialTheme.colorScheme.surfaceVariant,
@@ -562,62 +559,58 @@ fun OnboardingScreen(
                 .fillMaxWidth()
         ) {
             when (uiState.currentStep) {
-                0 -> StepOnePreferences(
-                    name = name,
-                    onNameChange = { name = it },
-                    gender = gender,
-                    onGenderChange = {
-                        gender = it
-                        calories = computeCalories(g = it).toString()
-                    },
-                    primaryGoal = primaryGoal,
-                    onGoalChange = {
-                        primaryGoal = it
-                        calories = computeCalories(goal = it).toString()
-                    },
-                    experienceLevel = experienceLevel,
-                    onExperienceChange = { experienceLevel = it },
-                    trainingDays = trainingDays,
-                    onTrainingDaysChange = { trainingDays = it },
-                    unitSystem = unitSystem,
-                    onUnitChange = { handleUnitChange(it) },
-                    height = height,
-                    onHeightChange = {
-                        height = it
-                        if (it.toDoubleOrNull() != null) {
-                            calories = computeCalories(hStr = it).toString()
-                        }
-                    },
-                    heightError = heightError,
-                    weight = weight,
-                    onWeightChange = {
-                        weight = it
-                        if (it.toDoubleOrNull() != null) {
-                            calories = computeCalories(wStr = it).toString()
-                        }
-                    },
-                    weightError = weightError,
-                    calories = calories,
-                    onCaloriesChange = { calories = it },
-                    caloriesError = caloriesError,
-                    onAutoCalculateCalories = { calories = computeCalories().toString() },
+                0 -> StepWelcome(
                     isGoogleLinked = storedProfile?.googleLinked == true,
                     googleEmail = storedProfile?.googleEmail,
+                    googleDisplayName = storedProfile?.googleDisplayName,
+                    googlePhotoUrl = storedProfile?.googlePhotoUrl,
                     onSignInGoogle = { signInLauncher.launch(viewModel.getGoogleSignInIntent()) },
-                    isNextEnabled = isStepOneValid,
                     onNext = { viewModel.setStep(1) },
                 )
 
-                1 -> StepTwoEquipments(
+                1 -> StepGoalsAndExperience(
+                    primaryGoal = primaryGoal,
+                    onGoalChange = { primaryGoal = it },
+                    experienceLevel = experienceLevel,
+                    onExperienceChange = { experienceLevel = it },
+                    onNext = { viewModel.setStep(2) },
+                )
+
+                2 -> StepScheduleAndEquipment(
+                    trainingDays = trainingDays,
+                    onTrainingDaysChange = { trainingDays = it },
+                    selectedRoutine = selectedRoutine,
+                    onRoutineChange = { selectedRoutine = it },
                     equipments = equipments,
                     onAddEquipment = { eqName, cat, loc, uri, note ->
                         viewModel.addEquipment(eqName, cat, loc, uri, note)
                     },
                     onRemoveEquipment = { viewModel.removeEquipment(it) },
-                    onNext = { viewModel.setStep(2) },
+                    onNext = { viewModel.setStep(3) },
                 )
 
-                2 -> {
+                3 -> StepOptionalMeasurements(
+                    name = name,
+                    onNameChange = { name = it },
+                    gender = gender,
+                    onGenderChange = { gender = it },
+                    unitSystem = unitSystem,
+                    onUnitChange = { handleUnitChange(it) },
+                    height = height,
+                    onHeightChange = { height = it },
+                    heightError = heightError,
+                    weight = weight,
+                    onWeightChange = { weight = it },
+                    weightError = weightError,
+                    calories = calories,
+                    onCaloriesChange = { calories = it },
+                    caloriesError = caloriesError,
+                    onAutoCalculateCalories = { calories = computeCalories().toString() },
+                    isValid = isStepMeasurementsValid,
+                    onNext = { viewModel.setStep(4) },
+                )
+
+                4 -> {
                     val currentInputs = PlanInputsSnapshot(
                         routineName = selectedRoutine,
                         goal = primaryGoal,
@@ -628,16 +621,23 @@ fun OnboardingScreen(
                     )
                     val isPlanStale = uiState.generatedPlan != null && uiState.generatedPlanInputs != null && uiState.generatedPlanInputs != currentInputs
 
-                    StepThreeRoutines(
+                    StepPlanReview(
+                        primaryGoal = primaryGoal,
+                        experienceLevel = experienceLevel,
+                        trainingDays = trainingDays,
                         selectedRoutine = selectedRoutine,
-                        onRoutineChange = { selectedRoutine = it },
+                        equipments = equipments,
+                        height = height,
+                        weight = weight,
+                        calories = calories,
+                        unitSystem = unitSystem,
                         personalNotes = personalNotes,
                         onNotesChange = { personalNotes = it },
-                        equipmentsCount = equipments.size,
-                        primaryGoal = primaryGoal,
                         uiState = uiState,
                         isPlanStale = isPlanStale,
-                        isStepOneValid = isStepOneValid,
+                        onEditGoal = { viewModel.setStep(1) },
+                        onEditSchedule = { viewModel.setStep(2) },
+                        onEditMeasurements = { viewModel.setStep(3) },
                         onGeneratePlan = {
                             viewModel.generateGeminiPlan(
                                 routineName = selectedRoutine,
@@ -662,9 +662,9 @@ fun OnboardingScreen(
 
                             val updated = base.copy(
                                 displayName = name.ifBlank { "Athlete" },
-                                gender = gender, // Guaranteed default male
+                                gender = gender,
                                 unitSystem = unitSystem,
-                                themeMode = ThemeMode.LIGHT, // App is in light mode
+                                themeMode = ThemeMode.LIGHT,
                                 heightCm = canonicalH,
                                 weightKg = canonicalW,
                                 calorieGoal = calories.toIntOrNull() ?: base.calorieGoal,
@@ -683,41 +683,182 @@ fun OnboardingScreen(
             }
         }
     }
-
 }
 
 // -------------------------------------------------------------
-// STEP 1: USER PREFERENCES, GOALS, GENDER (MALE DEFAULT), BODY STATS
+// STEP 0: WELCOME & GOOGLE HEALTH CONNECT ACCOUNT LINK
+// -------------------------------------------------------------
+@Composable
+private fun StepWelcome(
+    isGoogleLinked: Boolean,
+    googleEmail: String?,
+    googleDisplayName: String?,
+    googlePhotoUrl: String?,
+    onSignInGoogle: () -> Unit,
+    onNext: () -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier.size(56.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.FitnessCenter,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+                }
+                Text(
+                    "Welcome to GymTracker",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Text(
+                    "Your intelligent, flexible workout logger and AI training assistant. Build custom routines, track workouts, and monitor body composition.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        item {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isGoogleLinked) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                ),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        GoogleLogoIcon(Modifier.size(24.dp))
+                        Column {
+                            Text(
+                                if (isGoogleLinked) "Connected as ${googleDisplayName ?: googleEmail}" else "Google Account & Health Sync",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "Optional Integration",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                        }
+                    }
+
+                    Text(
+                        text = if (isGoogleLinked) {
+                            "Your workout logs, weight tracking, and calories will automatically sync to Google Health Connect."
+                        } else {
+                            "Connect Google Health Connect to seamlessly sync your workouts, strength gains, and body measurements across apps."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    if (!isGoogleLinked) {
+                        GoogleSignInButton(
+                            onClick = onSignInGoogle,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else if (!googleEmail.isNullOrBlank()) {
+                        Text(
+                            "Account email: $googleEmail",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
+
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "What to expect in setup:",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    val features = listOf(
+                        "1. Goal & Experience Level" to "Calibrate training intensity and rep ranges",
+                        "2. Schedule & Equipment" to "Pick training days and register your gym machines",
+                        "3. Optional Measurements" to "Set body stats & target calories (or skip)",
+                        "4. Plan Review" to "Review summary & generate your AI routine"
+                    )
+
+                    features.forEach { (stepTitle, stepDesc) ->
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Icon(
+                                Icons.Default.Check,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp).padding(top = 2.dp)
+                            )
+                            Column {
+                                Text(stepTitle, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                                Text(stepDesc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Button(
+                onClick = onNext,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(
+                    if (isGoogleLinked) "Continue to Goals" else "Continue without account",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.width(8.dp))
+                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------
+// STEP 1: GOALS & EXPERIENCE LEVEL
 // -------------------------------------------------------------
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun StepOnePreferences(
-    name: String,
-    onNameChange: (String) -> Unit,
-    gender: Gender,
-    onGenderChange: (Gender) -> Unit,
+private fun StepGoalsAndExperience(
     primaryGoal: String,
     onGoalChange: (String) -> Unit,
     experienceLevel: String,
     onExperienceChange: (String) -> Unit,
-    trainingDays: Int,
-    onTrainingDaysChange: (Int) -> Unit,
-    unitSystem: UnitSystem,
-    onUnitChange: (UnitSystem) -> Unit,
-    height: String,
-    onHeightChange: (String) -> Unit,
-    heightError: String? = null,
-    weight: String,
-    onWeightChange: (String) -> Unit,
-    weightError: String? = null,
-    calories: String,
-    onCaloriesChange: (String) -> Unit,
-    caloriesError: String? = null,
-    onAutoCalculateCalories: () -> Unit,
-    isGoogleLinked: Boolean = false,
-    googleEmail: String? = null,
-    onSignInGoogle: () -> Unit = {},
-    isNextEnabled: Boolean = true,
     onNext: () -> Unit,
 ) {
     val goals = listOf(
@@ -727,58 +868,28 @@ private fun StepOnePreferences(
         "Tone & Endurance" to "Athletic conditioning, high reps & stamina",
     )
 
+    val experiences = listOf(
+        "Beginner" to "0-1 years of regular lifting",
+        "Intermediate" to "1-3 years with consistent technique",
+        "Advanced" to "3+ years, advanced progressive overload"
+    )
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        // Google Sign-In & Health Link Card
-        item {
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isGoogleLinked) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
-                ),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        GoogleLogoIcon(Modifier.size(20.dp))
-                        Text(
-                            if (isGoogleLinked) "Connected as $googleEmail" else "Sign in with Google",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    Text(
-                        text = if (isGoogleLinked) {
-                            "Your account is connected to Google Health Connect. Your workouts and weight logs will automatically link to Health."
-                        } else {
-                            "Link your workout progress, strength gains, and weight logs to Google Health Connect from day 1."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    if (!isGoogleLinked) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                            GoogleSignInButton(onClick = onSignInGoogle, modifier = Modifier.weight(1f))
-                        }
-                    }
-                }
-            }
-        }
-
         item {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    "What's your primary fitness goal?",
+                    "Primary Fitness Goal",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Text(
-                    "Gemini will calibrate rep ranges, rest intervals, and volume to match your goal.",
+                    "Choose what matters most. Gemini and GymTracker will calibrate your training volume and rep ranges.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -817,153 +928,79 @@ private fun StepOnePreferences(
                         }
                     }
                     Column(Modifier.weight(1f)) {
-                        Text(goalTitle, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
-                        Text(goalDesc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            goalTitle,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            goalDesc,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
         }
 
         item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Experience Level",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Text(
+                    "Helps estimate optimal set volume and recovery capacity.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        items(experiences) { (expTitle, expDesc) ->
+            val isSelected = experienceLevel.equals(expTitle, ignoreCase = true)
+            OutlinedCard(
+                onClick = { onExperienceChange(expTitle) },
+                colors = CardDefaults.outlinedCardColors(
+                    containerColor = if (isSelected) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surface
+                ),
+                border = androidx.compose.foundation.BorderStroke(
+                    width = if (isSelected) 2.dp else 1.dp,
+                    color = if (isSelected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.outlineVariant
+                ),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Text("Athlete Profile & Body Stats", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-
-                    OutlinedTextField(
-                        value = name,
-                        onValueChange = onNameChange,
-                        label = { Text("Your Name or Nickname") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-
-                    // Gender Selector (Default Male as requested)
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Gender (Default: Male)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Gender.entries.forEach { entry ->
-                                val selected = gender == entry
-                                FilterChip(
-                                    selected = selected,
-                                    onClick = { onGenderChange(entry) },
-                                    label = { Text(entry.name.lowercase().replaceFirstChar { it.titlecase() }) },
-                                    leadingIcon = if (selected) {
-                                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                                    } else null,
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                        selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                                    )
-                                )
-                            }
-                        }
-                    }
-
-                    // Experience Level
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Experience Level", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf("Beginner", "Intermediate", "Advanced").forEach { exp ->
-                                FilterChip(
-                                    selected = experienceLevel == exp,
-                                    onClick = { onExperienceChange(exp) },
-                                    label = { Text(exp) }
-                                )
-                            }
-                        }
-                    }
-
-                    // Training Days Available
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Days Available to Train per Week: $trainingDays days", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(3, 4, 5, 6).forEach { days ->
-                                FilterChip(
-                                    selected = trainingDays == days,
-                                    onClick = { onTrainingDaysChange(days) },
-                                    label = { Text("$days Days") }
-                                )
-                            }
-                        }
-                    }
-
-                    // Units
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(20.dp)
+                            .clip(CircleShape)
+                            .background(if (isSelected) MaterialTheme.colorScheme.secondary else Color.Transparent)
+                            .border(1.5.dp, if (isSelected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.outline, CircleShape),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Text("Units System", style = MaterialTheme.typography.bodyMedium)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            UnitSystem.entries.forEach { unit ->
-                                FilterChip(
-                                    selected = unitSystem == unit,
-                                    onClick = { onUnitChange(unit) },
-                                    label = { Text(if (unit == UnitSystem.METRIC) "Metric (kg/cm)" else "Imperial (lb/in)") }
-                                )
-                            }
+                        if (isSelected) {
+                            Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
                         }
                     }
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                        OutlinedTextField(
-                            value = height,
-                            onValueChange = onHeightChange,
-                            label = { Text("Height ${if (unitSystem == UnitSystem.METRIC) "cm" else "in"}") },
-                            isError = heightError != null,
-                            supportingText = heightError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(1f),
-                            singleLine = true
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            expTitle,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (isSelected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface
                         )
-                        OutlinedTextField(
-                            value = weight,
-                            onValueChange = onWeightChange,
-                            label = { Text("Weight ${if (unitSystem == UnitSystem.METRIC) "kg" else "lb"}") },
-                            isError = weightError != null,
-                            supportingText = weightError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(1f),
-                            singleLine = true
-                        )
-                    }
-
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Target Daily Calories", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            OutlinedButton(
-                                onClick = onAutoCalculateCalories,
-                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                                modifier = Modifier.height(30.dp),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text("⚡ Auto-calculate", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-
-                        OutlinedTextField(
-                            value = calories,
-                            onValueChange = onCaloriesChange,
-                            label = { Text("Daily Calories (kcal)") },
-                            isError = caloriesError != null,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            supportingText = {
-                                if (caloriesError != null) {
-                                    Text(caloriesError, color = MaterialTheme.colorScheme.error)
-                                } else {
-                                    Text("Auto-calculated via Mifflin-St Jeor formula based on $weight ${if (unitSystem == UnitSystem.METRIC) "kg" else "lb"}, $height ${if (unitSystem == UnitSystem.METRIC) "cm" else "in"}, and $primaryGoal")
-                                }
-                            }
+                        Text(
+                            expDesc,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -973,13 +1010,12 @@ private fun StepOnePreferences(
         item {
             Button(
                 onClick = onNext,
-                enabled = isNextEnabled,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("Continue to Gym Equipment (Optional)", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("Continue to Schedule & Equipment", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.width(8.dp))
                 Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
             }
@@ -988,18 +1024,22 @@ private fun StepOnePreferences(
 }
 
 // -------------------------------------------------------------
-// STEP 2: REGISTER MACHINES AT HOME OR GYM & UPLOAD PHOTOS
+// STEP 2: SCHEDULE & EQUIPMENT
 // -------------------------------------------------------------
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun StepTwoEquipments(
+private fun StepScheduleAndEquipment(
+    trainingDays: Int,
+    onTrainingDaysChange: (Int) -> Unit,
+    selectedRoutine: String,
+    onRoutineChange: (String) -> Unit,
     equipments: List<GymEquipmentEntity>,
     onAddEquipment: (name: String, category: String, location: String, photoUri: Uri?, notes: String) -> Unit,
     onRemoveEquipment: (String) -> Unit,
     onNext: () -> Unit,
 ) {
     var machineName by remember { mutableStateOf("") }
-    var location by remember { mutableStateOf("Gym") } // "Gym" or "Home"
+    var location by remember { mutableStateOf("Gym") }
     var category by remember { mutableStateOf("Machine") }
     var selectedPhotoUri by remember { mutableStateOf<Uri?>(null) }
     var machineNotes by remember { mutableStateOf("") }
@@ -1007,9 +1047,7 @@ private fun StepTwoEquipments(
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
-        if (uri != null) {
-            selectedPhotoUri = uri
-        }
+        if (uri != null) selectedPhotoUri = uri
     }
 
     val quickPresets = listOf(
@@ -1019,318 +1057,6 @@ private fun StepTwoEquipments(
         "Treadmill"
     )
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    "Tell us what machines you have",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Text(
-                    "Tell Gemini what machines you have at your gym or home (or upload machine photos). Gemini will cater and personalize your workout routine specifically to these machines, and save them to your workout profile.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        // Add Equipment Card
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Add Machine or Equipment", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
-
-                    // Location Toggle
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        listOf("Gym", "Home").forEach { loc ->
-                            FilterChip(
-                                selected = location == loc,
-                                onClick = { location = loc },
-                                label = { Text(if (loc == "Gym") "Commercial Gym" else "Home Gym") },
-                                leadingIcon = {
-                                    Icon(
-                                        if (loc == "Gym") Icons.Default.FitnessCenter else Icons.Default.Home,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                },
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    }
-
-                    // Machine Name
-                    OutlinedTextField(
-                        value = machineName,
-                        onValueChange = { machineName = it },
-                        label = { Text("Machine Name (e.g. Lat Pulldown, Leg Press)") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-
-                    // Quick Tap Suggestions
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Quick Add Suggestions:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            quickPresets.forEach { preset ->
-                                Surface(
-                                    shape = RoundedCornerShape(16.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant,
-                                    modifier = Modifier.clickable {
-                                        machineName = preset
-                                        category = when {
-                                            preset.contains("Cable", ignoreCase = true) -> "Cable"
-                                            preset.contains("Dumbbell", ignoreCase = true) -> "Free Weights"
-                                            preset.contains("Treadmill", ignoreCase = true) -> "Cardio"
-                                            else -> "Machine"
-                                        }
-                                    }
-                                ) {
-                                    Text(
-                                        "+ $preset",
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // Photo Upload Row
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = {
-                                photoPickerLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                )
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(if (selectedPhotoUri != null) "Change Photo" else "Upload Machine Photo")
-                        }
-
-                        if (selectedPhotoUri != null) {
-                            Box(
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
-                            ) {
-                                AsyncImage(
-                                    model = selectedPhotoUri,
-                                    contentDescription = "Selected machine",
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Crop
-                                )
-                                IconButton(
-                                    onClick = { selectedPhotoUri = null },
-                                    modifier = Modifier
-                                        .size(18.dp)
-                                        .align(Alignment.TopEnd)
-                                        .background(Color.Black.copy(alpha = 0.6f), CircleShape)
-                                ) {
-                                    Icon(Icons.Default.Close, contentDescription = "Clear", tint = Color.White, modifier = Modifier.size(12.dp))
-                                }
-                            }
-                        }
-                    }
-
-                    // Add Button
-                    Button(
-                        onClick = {
-                            if (machineName.isNotBlank()) {
-                                onAddEquipment(machineName, category, location, selectedPhotoUri, machineNotes)
-                                machineName = ""
-                                selectedPhotoUri = null
-                                machineNotes = ""
-                            }
-                        },
-                        enabled = machineName.isNotBlank(),
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Save Machine to Workout Profile")
-                    }
-                }
-            }
-        }
-
-        // Saved Equipments List Header
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "Your Registered Gym Equipments (${equipments.size})",
-                    fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.titleSmall
-                )
-                if (equipments.isEmpty()) {
-                    Text("None added yet (Optional)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
-
-        if (equipments.isEmpty()) {
-            item {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(Icons.Default.FitnessCenter, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
-                        Text("No machines added yet", fontWeight = FontWeight.Bold)
-                        Text(
-                            "Add at least one machine above (or continue with standard gym gear), and Gemini will cater every exercise to what you have.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                        )
-                    }
-                }
-            }
-        }
-
-        items(equipments, key = { it.id }) { eq ->
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    if (!eq.photoUri.isNullOrBlank()) {
-                        AsyncImage(
-                            model = eq.photoUri,
-                            contentDescription = eq.name,
-                            modifier = Modifier
-                                .size(54.dp)
-                                .clip(RoundedCornerShape(8.dp)),
-                            contentScale = ContentScale.Crop
-                        )
-                    } else {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                            modifier = Modifier.size(54.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    if (eq.location == "Home") Icons.Default.Home else Icons.Default.FitnessCenter,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                    }
-
-                    Column(Modifier.weight(1f)) {
-                        Text(eq.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = MaterialTheme.colorScheme.secondaryContainer,
-                            ) {
-                                Text(
-                                    eq.location,
-                                    fontSize = 11.sp,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                    fontWeight = FontWeight.Medium,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer
-                                )
-                            }
-                            Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant,
-                            ) {
-                                Text(
-                                    eq.category,
-                                    fontSize = 11.sp,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-
-                    IconButton(onClick = { onRemoveEquipment(eq.id) }) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
-                    }
-                }
-            }
-        }
-
-        item {
-            Button(
-                onClick = onNext,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text(
-                    if (equipments.isEmpty()) "Skip Equipment Setup & Continue" else "Next: Workout Routines (${equipments.size} machines)",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(Modifier.width(8.dp))
-                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
-            }
-        }
-    }
-}
-
-// -------------------------------------------------------------
-// STEP 3: SUGGEST ROUTINES & LET GEMINI GENERATE WORKOUT PLAN
-// -------------------------------------------------------------
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun StepThreeRoutines(
-    selectedRoutine: String,
-    onRoutineChange: (String) -> Unit,
-    personalNotes: String,
-    onNotesChange: (String) -> Unit,
-    equipmentsCount: Int,
-    primaryGoal: String,
-    uiState: OnboardingUiState,
-    isPlanStale: Boolean = false,
-    isStepOneValid: Boolean = true,
-    onGeneratePlan: () -> Unit,
-    onFinish: () -> Unit,
-) {
     val routines = listOf(
         RoutineSuggestion(
             title = "Push Pull Legs (PPL)",
@@ -1369,14 +1095,6 @@ private fun StepThreeRoutines(
         ),
     )
 
-    val noteChips = listOf(
-        "Low back friendly / no spinal load",
-        "Short 45-min workouts",
-        "Focus on chest & lats",
-        "Gentle on knees",
-        "High rep burnouts"
-    )
-
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -1385,38 +1103,60 @@ private fun StepThreeRoutines(
     ) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        "Choose your routine split",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.secondaryContainer
-                    ) {
-                        Text(
-                            "Single select",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                        )
-                    }
-                }
                 Text(
-                    "Select exactly one routine split for your program. Your weekly workout days, rest days, and dashboard recommendations will follow this routine.",
+                    "Schedule & Equipment",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Text(
+                    "Set your weekly training availability, choose your routine split, and register machines available at your gym.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
 
-        // Suggested Routines (Strict Single Select)
+        // Days per week selector
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Days Available to Train per Week", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(3, 4, 5, 6).forEach { days ->
+                            FilterChip(
+                                selected = trainingDays == days,
+                                onClick = { onTrainingDaysChange(days) },
+                                label = { Text("$days Days") },
+                                leadingIcon = if (trainingDays == days) {
+                                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                } else null,
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Routine split choice group
+        item {
+            Text(
+                "Routine Split Choice",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
         items(routines) { item ->
             val isSelected = selectedRoutine.trim().equals(item.title.trim(), ignoreCase = true)
-
             OutlinedCard(
                 onClick = { onRoutineChange(item.title) },
                 colors = CardDefaults.outlinedCardColors(
@@ -1466,7 +1206,6 @@ private fun StepThreeRoutines(
 
                     Text(item.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-                    // Daily Schedule Preview Strip
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = if (isSelected) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -1475,7 +1214,7 @@ private fun StepThreeRoutines(
                     ) {
                         Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(
-                                "📅 Schedule by Day:",
+                                "📅 Daily Schedule Preview:",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
@@ -1486,6 +1225,574 @@ private fun StepThreeRoutines(
                                 fontSize = 11.5.sp,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add Gym Equipment Card (Optional)
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Register Gym Equipment (Optional)", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "Add machines or equipment at your gym/home so Gemini can tailor every exercise to what you have.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf("Gym", "Home").forEach { loc ->
+                            FilterChip(
+                                selected = location == loc,
+                                onClick = { location = loc },
+                                label = { Text(if (loc == "Gym") "Commercial Gym" else "Home Gym") },
+                                leadingIcon = {
+                                    Icon(
+                                        if (loc == "Gym") Icons.Default.FitnessCenter else Icons.Default.Home,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = machineName,
+                        onValueChange = { machineName = it },
+                        label = { Text("Machine Name (e.g. Lat Pulldown, Leg Press)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Quick Add Suggestions:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            quickPresets.forEach { preset ->
+                                Surface(
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    modifier = Modifier.clickable {
+                                        machineName = preset
+                                        category = when {
+                                            preset.contains("Cable", ignoreCase = true) -> "Cable"
+                                            preset.contains("Dumbbell", ignoreCase = true) -> "Free Weights"
+                                            preset.contains("Treadmill", ignoreCase = true) -> "Cardio"
+                                            else -> "Machine"
+                                        }
+                                    }
+                                ) {
+                                    Text(
+                                        "+ $preset",
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                photoPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (selectedPhotoUri != null) "Change Photo" else "Upload Photo")
+                        }
+
+                        if (selectedPhotoUri != null) {
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                            ) {
+                                AsyncImage(
+                                    model = selectedPhotoUri,
+                                    contentDescription = "Selected machine",
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
+                                )
+                                IconButton(
+                                    onClick = { selectedPhotoUri = null },
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .align(Alignment.TopEnd)
+                                        .background(Color.Black.copy(alpha = 0.6f), CircleShape)
+                                ) {
+                                    Icon(Icons.Default.Close, contentDescription = "Clear", tint = Color.White, modifier = Modifier.size(12.dp))
+                                }
+                            }
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            if (machineName.isNotBlank()) {
+                                onAddEquipment(machineName, category, location, selectedPhotoUri, machineNotes)
+                                machineName = ""
+                                selectedPhotoUri = null
+                                machineNotes = ""
+                            }
+                        },
+                        enabled = machineName.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Add Machine to Equipment List")
+                    }
+                }
+            }
+        }
+
+        if (equipments.isNotEmpty()) {
+            item {
+                Text("Registered Gym Equipment (${equipments.size})", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+            }
+            items(equipments, key = { it.id }) { eq ->
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        if (!eq.photoUri.isNullOrBlank()) {
+                            AsyncImage(
+                                model = eq.photoUri,
+                                contentDescription = eq.name,
+                                modifier = Modifier.size(54.dp).clip(RoundedCornerShape(8.dp)),
+                                contentScale = ContentScale.Crop
+                            )
+                        } else {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                modifier = Modifier.size(54.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        if (eq.location == "Home") Icons.Default.Home else Icons.Default.FitnessCenter,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
+
+                        Column(Modifier.weight(1f)) {
+                            Text(eq.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = MaterialTheme.colorScheme.secondaryContainer,
+                                ) {
+                                    Text(
+                                        eq.location,
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                }
+                            }
+                        }
+
+                        IconButton(onClick = { onRemoveEquipment(eq.id) }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Button(
+                onClick = onNext,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(
+                    if (equipments.isEmpty()) "Continue to Optional Measurements" else "Continue (${equipments.size} machines registered)",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.width(8.dp))
+                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------
+// STEP 3: OPTIONAL MEASUREMENTS & UNITS
+// -------------------------------------------------------------
+@Composable
+private fun StepOptionalMeasurements(
+    name: String,
+    onNameChange: (String) -> Unit,
+    gender: Gender,
+    onGenderChange: (Gender) -> Unit,
+    unitSystem: UnitSystem,
+    onUnitChange: (UnitSystem) -> Unit,
+    height: String,
+    onHeightChange: (String) -> Unit,
+    heightError: String?,
+    weight: String,
+    onWeightChange: (String) -> Unit,
+    weightError: String?,
+    calories: String,
+    onCaloriesChange: (String) -> Unit,
+    caloriesError: String?,
+    onAutoCalculateCalories: () -> Unit,
+    isValid: Boolean,
+    onNext: () -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        "Optional Measurements",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer
+                    ) {
+                        Text(
+                            "Optional",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+                Text(
+                    "Adding your body metrics enables baseline calorie recommendations. Fields can be left blank if you prefer to skip.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text("Athlete Profile & Body Stats", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = onNameChange,
+                        label = { Text("Athlete Name / Nickname") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+
+                    // Gender Selector
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Gender Selection", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Gender.entries.forEach { entry ->
+                                val selected = gender == entry
+                                FilterChip(
+                                    selected = selected,
+                                    onClick = { onGenderChange(entry) },
+                                    label = { Text(entry.name.lowercase().replaceFirstChar { it.titlecase() }) },
+                                    leadingIcon = if (selected) {
+                                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                    } else null,
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                        selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                )
+                            }
+                        }
+                    }
+
+                    // Unit System Switcher
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Preferred Units", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            UnitSystem.entries.forEach { unit ->
+                                FilterChip(
+                                    selected = unitSystem == unit,
+                                    onClick = { onUnitChange(unit) },
+                                    label = { Text(if (unit == UnitSystem.METRIC) "Metric (kg, cm)" else "Imperial (lb, in)") }
+                                )
+                            }
+                        }
+                    }
+
+                    // Height & Weight fields with explicit unit suffix indicators
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = height,
+                            onValueChange = onHeightChange,
+                            label = { Text("Height (Optional)") },
+                            suffix = { Text(if (unitSystem == UnitSystem.METRIC) "cm" else "in") },
+                            isError = heightError != null,
+                            supportingText = heightError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = weight,
+                            onValueChange = onWeightChange,
+                            label = { Text("Weight (Optional)") },
+                            suffix = { Text(if (unitSystem == UnitSystem.METRIC) "kg" else "lb") },
+                            isError = weightError != null,
+                            supportingText = weightError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                    }
+
+                    // Target Calories field with explicit unit suffix indicator
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Target Daily Calories (Optional)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            OutlinedButton(
+                                onClick = onAutoCalculateCalories,
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                modifier = Modifier.height(30.dp),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("⚡ Auto-calculate", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        OutlinedTextField(
+                            value = calories,
+                            onValueChange = onCaloriesChange,
+                            label = { Text("Daily Calories Goal (Optional)") },
+                            suffix = { Text("kcal") },
+                            isError = caloriesError != null,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            supportingText = {
+                                if (caloriesError != null) {
+                                    Text(caloriesError, color = MaterialTheme.colorScheme.error)
+                                } else {
+                                    Text("Calculated via Mifflin-St Jeor formula based on body stats and goal.")
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
+        item {
+            Button(
+                onClick = onNext,
+                enabled = isValid,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(
+                    if (height.isBlank() && weight.isBlank() && calories.isBlank()) "Skip Measurements & Review Plan" else "Continue to Plan Review",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.width(8.dp))
+                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------
+// STEP 4: PLAN REVIEW & AI ROUTINE GENERATOR
+// -------------------------------------------------------------
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun StepPlanReview(
+    primaryGoal: String,
+    experienceLevel: String,
+    trainingDays: Int,
+    selectedRoutine: String,
+    equipments: List<GymEquipmentEntity>,
+    height: String,
+    weight: String,
+    calories: String,
+    unitSystem: UnitSystem,
+    personalNotes: String,
+    onNotesChange: (String) -> Unit,
+    uiState: OnboardingUiState,
+    isPlanStale: Boolean,
+    onEditGoal: () -> Unit,
+    onEditSchedule: () -> Unit,
+    onEditMeasurements: () -> Unit,
+    onGeneratePlan: () -> Unit,
+    onFinish: () -> Unit,
+) {
+    val noteChips = listOf(
+        "Low back friendly / no spinal load",
+        "Short 45-min workouts",
+        "Focus on chest & lats",
+        "Gentle on knees",
+        "High rep burnouts"
+    )
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "Plan Review & AI Routine",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Text(
+                    "Review your setup choices. Gemini Coach will generate a custom workout split tailored specifically for you.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        // Summary Card with Edit Links
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Your Program Summary", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+
+                    // Goal & Experience
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Goal & Experience", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
+                            Text("$primaryGoal • $experienceLevel", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        }
+                        TextButton(onClick = onEditGoal) {
+                            Text("Edit", fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                    // Schedule & Routine
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Schedule & Split", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
+                            Text("$trainingDays days/week • $selectedRoutine", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        }
+                        TextButton(onClick = onEditSchedule) {
+                            Text("Edit", fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                    // Equipment
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Registered Equipment", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
+                            val eqText = if (equipments.isEmpty()) "Standard gym gear" else "${equipments.size} machines (${equipments.take(3).joinToString { it.name }})"
+                            Text(eqText, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        }
+                        TextButton(onClick = onEditSchedule) {
+                            Text("Edit", fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                    // Measurements
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Body Stats & Calories", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
+                            val statsText = buildString {
+                                if (weight.isNotBlank()) append("$weight ${if (unitSystem == UnitSystem.METRIC) "kg" else "lb"}, ")
+                                if (height.isNotBlank()) append("$height ${if (unitSystem == UnitSystem.METRIC) "cm" else "in"}, ")
+                                if (calories.isNotBlank()) append("$calories kcal")
+                            }.ifBlank { "Not specified (Optional)" }
+                            Text(statsText, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        }
+                        TextButton(onClick = onEditMeasurements) {
+                            Text("Edit", fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -1506,7 +1813,7 @@ private fun StepThreeRoutines(
                     }
 
                     Text(
-                        "Tell Gemini any specific requests (e.g. feel low energy, substitute barbells, protect joint, focus on upper chest). Optional.",
+                        "Tell Gemini any specific requests (e.g. feel low energy, substitute barbells, protect joint, focus on upper chest).",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1541,7 +1848,7 @@ private fun StepThreeRoutines(
             }
         }
 
-        // Gemini Plan Generation Button & Preview
+        // Gemini Plan Generation Card
         item {
             Card(
                 colors = CardDefaults.cardColors(
@@ -1557,7 +1864,7 @@ private fun StepThreeRoutines(
                     }
 
                     Text(
-                        "Gemini will generate your complete ${selectedRoutine.substringBefore(" (")} routine, catering every exercise to your $equipmentsCount registered machines and $primaryGoal goal.",
+                        "Gemini will generate your complete ${selectedRoutine.substringBefore(" (")} routine, catering every exercise to your ${equipments.size} registered machines and $primaryGoal goal.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1579,7 +1886,6 @@ private fun StepThreeRoutines(
                     } else {
                         Button(
                             onClick = onGeneratePlan,
-                            enabled = isStepOneValid,
                             modifier = Modifier.fillMaxWidth().height(48.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                             shape = RoundedCornerShape(10.dp)
@@ -1594,13 +1900,27 @@ private fun StepThreeRoutines(
                     }
 
                     if (uiState.errorMessage != null) {
-                        Text(uiState.errorMessage, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                uiState.errorMessage,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f)
+                            )
+                            OutlinedButton(onClick = onGeneratePlan, modifier = Modifier.height(32.dp)) {
+                                Text("Retry", fontSize = 12.sp)
+                            }
+                        }
                     }
                 }
             }
         }
 
-        // Stale Plan Warning Banner if inputs changed since generation
+        // Stale Plan Warning Banner
         if (isPlanStale) {
             item {
                 Surface(
@@ -1680,7 +2000,7 @@ private fun StepThreeRoutines(
         item {
             Button(
                 onClick = onFinish,
-                enabled = !uiState.isGeneratingPlan && isStepOneValid,
+                enabled = !uiState.isGeneratingPlan,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp),
