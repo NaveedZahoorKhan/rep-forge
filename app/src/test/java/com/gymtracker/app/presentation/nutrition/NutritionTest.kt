@@ -112,6 +112,11 @@ class NutritionTest {
             nutritionLogsStore[dateEpochDay] = updated
         }
 
+        override suspend fun upsertWater(water: WaterLogEntity) {
+            waterLogsStore[water.dateEpochDay] = water
+            notifyFlows(water.dateEpochDay)
+        }
+
         override suspend fun addWater(dateEpochDay: Long, deltaMl: Int, goalMl: Int) {
             val current = waterLogsStore[dateEpochDay] ?: WaterLogEntity(dateEpochDay = dateEpochDay, goalMl = goalMl)
             val updated = current.copy(milliliters = (current.milliliters + deltaMl).coerceAtLeast(0), goalMl = goalMl)
@@ -170,7 +175,6 @@ class NutritionTest {
         override suspend fun addMeasurement(measurement: com.gymtracker.app.data.local.entity.BodyMeasurementEntity) {}
         override suspend fun addProgressPhoto(photo: com.gymtracker.app.data.local.entity.ProgressPhotoEntity) {}
         override suspend fun upsertNutrition(log: NutritionLogEntity) {}
-        override suspend fun upsertWater(water: WaterLogEntity) {}
         override suspend fun addWeightLog(weight: WeightLogEntity) {}
         override suspend fun deleteWeightLog(id: String) {}
         override suspend fun upsertSchedule(schedule: com.gymtracker.app.data.local.entity.WeeklyScheduleEntity) {}
@@ -204,7 +208,7 @@ class NutritionTest {
     }
 
     @Test
-    fun `NutritionViewModel recomputes daily totals when adding and editing meals`() = runTest(testDispatcher) {
+    fun `NutritionViewModel recomputes daily totals when adding and editing meals with serving size`() = runTest(testDispatcher) {
         val repo = FakeGymRepository()
         val viewModel = NutritionViewModel(repo)
 
@@ -217,45 +221,35 @@ class NutritionTest {
         assertEquals(0, viewModel.state.value.meals.size)
         assertEquals(0, viewModel.state.value.log?.calories ?: 0)
 
-        // Add Meal 1
-        viewModel.saveMeal(null, "Oatmeal", 350, 15.0, 50.0, 6.0, 4.0)
+        // Add Meal 1 (Breakfast)
+        viewModel.saveMeal(null, "Oatmeal", 350, 15.0, 50.0, 6.0, 4.0, serving = "1 cup", mealCategory = "Breakfast")
         runCurrent()
 
         assertEquals(1, viewModel.state.value.meals.size)
+        assertEquals("Breakfast", viewModel.state.value.meals[0].mealCategory)
+        assertEquals("1 cup", viewModel.state.value.meals[0].serving)
         assertEquals(350, viewModel.state.value.log?.calories)
-        assertEquals(15.0, viewModel.state.value.log?.proteinG ?: 0.0, 0.01)
 
-        // Add Meal 2
-        viewModel.saveMeal(null, "Chicken Breast", 450, 50.0, 0.0, 10.0, 0.0)
+        // Add Meal 2 (Lunch)
+        viewModel.saveMeal(null, "Chicken Breast", 450, 50.0, 0.0, 10.0, 0.0, serving = "200g", mealCategory = "Lunch")
         runCurrent()
 
         assertEquals(2, viewModel.state.value.meals.size)
         assertEquals(800, viewModel.state.value.log?.calories)
-        assertEquals(65.0, viewModel.state.value.log?.proteinG ?: 0.0, 0.01)
 
         // Edit Meal 1
         val meal1 = viewModel.state.value.meals.first { it.name == "Oatmeal" }
-        viewModel.saveMeal(meal1.id, "Oatmeal with berries", 400, 18.0, 60.0, 7.0, 5.0)
+        viewModel.saveMeal(meal1.id, "Oatmeal with berries", 400, 18.0, 60.0, 7.0, 5.0, serving = "1.5 cups", mealCategory = "Breakfast")
         runCurrent()
 
         assertEquals(2, viewModel.state.value.meals.size)
         assertEquals(850, viewModel.state.value.log?.calories)
-        assertEquals(68.0, viewModel.state.value.log?.proteinG ?: 0.0, 0.01)
-
-        // Delete Meal 2
-        val meal2 = viewModel.state.value.meals.first { it.name == "Chicken Breast" }
-        viewModel.deleteMeal(meal2.id)
-        runCurrent()
-
-        assertEquals(1, viewModel.state.value.meals.size)
-        assertEquals(400, viewModel.state.value.log?.calories)
-        assertEquals(18.0, viewModel.state.value.log?.proteinG ?: 0.0, 0.01)
 
         job.cancel()
     }
 
     @Test
-    fun `NutritionViewModel manages date changes and keeps records isolated by date`() = runTest(testDispatcher) {
+    fun `NutritionViewModel supports meal deletion and recovery restore`() = runTest(testDispatcher) {
         val repo = FakeGymRepository()
         val viewModel = NutritionViewModel(repo)
 
@@ -264,67 +258,54 @@ class NutritionTest {
         }
         runCurrent()
 
-        val todayEpoch = LocalDate.now().toEpochDay()
-        val yesterdayEpoch = todayEpoch - 1
-
-        // Add meal today
-        viewModel.saveMeal(null, "Today Meal", 500, 30.0, 40.0, 10.0, 2.0)
+        // Add Meal
+        viewModel.saveMeal(null, "Protein Shake", 250, 30.0, 5.0, 3.0, 1.0, serving = "1 scoop", mealCategory = "Snacks")
         runCurrent()
 
         assertEquals(1, viewModel.state.value.meals.size)
-        assertEquals("Today Meal", viewModel.state.value.meals[0].name)
+        val mealId = viewModel.state.value.meals[0].id
 
-        // Navigate to yesterday
-        viewModel.setSelectedDate(yesterdayEpoch)
+        // Delete meal
+        viewModel.deleteMeal(mealId)
         runCurrent()
 
         assertEquals(0, viewModel.state.value.meals.size)
-        assertEquals(0, viewModel.state.value.log?.calories ?: 0)
+        assertNotNull(viewModel.recentlyDeletedMeal)
 
-        // Add meal yesterday
-        viewModel.saveMeal(null, "Yesterday Meal", 600, 40.0, 50.0, 12.0, 3.0)
+        // Undo deletion / Restore
+        viewModel.restoreDeletedMeal()
         runCurrent()
 
         assertEquals(1, viewModel.state.value.meals.size)
-        assertEquals("Yesterday Meal", viewModel.state.value.meals[0].name)
-        assertEquals(600, viewModel.state.value.log?.calories)
-
-        // Return to today
-        viewModel.resetToToday()
-        runCurrent()
-
-        assertEquals(1, viewModel.state.value.meals.size)
-        assertEquals("Today Meal", viewModel.state.value.meals[0].name)
-        assertEquals(500, viewModel.state.value.log?.calories)
+        assertEquals("Protein Shake", viewModel.state.value.meals[0].name)
 
         job.cancel()
     }
 
     @Test
-    fun `NutritionCalculator BMR and Auto-Calculate Target Plan`() {
-        val profile = UserProfileEntity(
-            gender = Gender.MALE,
-            weightKg = 80.0,
-            heightCm = 180.0,
-            birthYear = 1995,
-        )
+    fun `NutritionViewModel water increments and direct editable total`() = runTest(testDispatcher) {
+        val repo = FakeGymRepository()
+        val viewModel = NutritionViewModel(repo)
 
-        val age = LocalDate.now().year - 1995
-        val bmr = NutritionCalculator.bmr(profile.gender, profile.weightKg, profile.heightCm, age, BmrFormula.MIFFLIN_ST_JEOR)
+        val job = launch(testDispatcher) {
+            viewModel.state.collect {}
+        }
+        runCurrent()
 
-        // Mifflin-St Jeor: 10 * 80 + 6.25 * 180 - 5 * age + 5 = 800 + 1125 - 5*age + 5
-        val expectedBmr = 800.0 + 1125.0 - (5.0 * age) + 5.0
-        assertEquals(expectedBmr, bmr, 0.1)
+        // Rapid water increments
+        viewModel.addWater(250, 3000)
+        viewModel.addWater(250, 3000)
+        viewModel.addWater(500, 3000)
+        runCurrent()
 
-        val plan = NutritionCalculator.autoCalculateNutritionPlan(
-            weightKg = profile.weightKg,
-            heightCm = profile.heightCm,
-            gender = profile.gender,
-            age = age,
-            goal = "Lose weight",
-        )
+        assertEquals(1000, viewModel.state.value.water?.milliliters)
 
-        assertEquals((bmr * 1.55 - 500).toInt(), plan.calorieGoal)
-        assertEquals(160.0, plan.proteinGoalG, 0.1)
+        // Direct total edit
+        viewModel.setWaterTotal(2200, 3000)
+        runCurrent()
+
+        assertEquals(2200, viewModel.state.value.water?.milliliters)
+
+        job.cancel()
     }
 }

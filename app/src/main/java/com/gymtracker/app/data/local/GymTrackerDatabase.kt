@@ -54,7 +54,7 @@ import com.gymtracker.app.data.local.entity.WorkoutSessionEntity
         ManualWorkoutSetEntity::class,
         com.gymtracker.app.data.local.entity.HealthSyncLogEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -233,6 +233,14 @@ abstract class GymTrackerDatabase : RoomDatabase() {
             object : Migration(7, 8) {
                 override fun migrate(db: SupportSQLiteDatabase) {
                     db.execSQL("ALTER TABLE gemini_sync_reports ADD COLUMN isLocalFallback INTEGER NOT NULL DEFAULT 0")
+                }
+            }
+
+        val MIGRATION_8_9: Migration =
+            object : Migration(8, 9) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL("ALTER TABLE meals ADD COLUMN serving TEXT NOT NULL DEFAULT '1 serving'")
+                    db.execSQL("ALTER TABLE meals ADD COLUMN mealCategory TEXT NOT NULL DEFAULT 'Snacks'")
                 }
             }
     }

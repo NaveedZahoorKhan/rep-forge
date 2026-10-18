@@ -30,6 +30,7 @@ object DatabaseModule {
                 GymTrackerDatabase.MIGRATION_5_6,
                 GymTrackerDatabase.MIGRATION_6_7,
                 GymTrackerDatabase.MIGRATION_7_8,
+                GymTrackerDatabase.MIGRATION_8_9,
             )
             .fallbackToDestructiveMigration()
             .fallbackToDestructiveMigrationOnDowngrade()

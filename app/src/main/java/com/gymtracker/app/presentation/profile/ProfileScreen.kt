@@ -570,7 +570,7 @@ fun ProfileScreen(
             when (tab) {
                 0 -> SettingsPanel(profile, baseState.reminders, viewModel)
                 1 -> EquipmentsPanel(baseState.equipments, viewModel)
-                2 -> NutritionContent(nutritionState, nutritionViewModel)
+                2 -> NutritionContent(state = nutritionState, viewModel = nutritionViewModel)
                 3 -> DataPanel(
                     viewModel = viewModel,
                     profile = profile,
